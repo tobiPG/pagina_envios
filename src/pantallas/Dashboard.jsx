@@ -1,60 +1,120 @@
-import React, { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
+import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
+import "leaflet/dist/leaflet.css";
+import L from "leaflet";
+
+// Icono personalizado para el mensajero
+const mensajeroIcon = new L.Icon({
+  iconUrl: "https://cdn-icons-png.flaticon.com/512/684/684908.png",
+  iconSize: [40, 40],
+  iconAnchor: [20, 40],
+  popupAnchor: [0, -40]
+});
 
 function Dashboard() {
-  const [resumen, setResumen] = useState({
-    totalOrdenes: 0,
-    totalProductos: 0,
-    totalClientes: 0,
-    ultimaEntrega: "No disponible",
-  });
+  const [ordenes, setOrdenes] = useState([]);
+  const [mensajeros, setMensajeros] = useState([]);
 
   useEffect(() => {
-    const ordenes = JSON.parse(localStorage.getItem("ordenesEntrega")) || [];
-    const productos = JSON.parse(localStorage.getItem("productos")) || [];
-    const clientes = JSON.parse(localStorage.getItem("clientes")) || [];
+    // Cargar órdenes
+    const datos = JSON.parse(localStorage.getItem("ordenesEntrega")) || [];
+    setOrdenes(datos);
 
-    const ultimaEntrega = ordenes.length > 0 ? ordenes[ordenes.length - 1].fecha : "No disponible";
-
-    setResumen({
-      totalOrdenes: ordenes.length,
-      totalProductos: productos.length,
-      totalClientes: clientes.length,
-      ultimaEntrega,
-    });
+    // Cargar ubicaciones de mensajeros
+    const ubicaciones = JSON.parse(localStorage.getItem("ubicacionesMensajeros")) || [];
+    setMensajeros(ubicaciones);
   }, []);
+
+  // Color del tiempo real comparado con el estimado
+  const getTiempoRealColor = (tiempoReal, tiempoEstimado) => {
+    if (tiempoReal === null || tiempoReal === undefined) return "black";
+    if (!tiempoEstimado) return "black";
+    return tiempoReal <= tiempoEstimado ? "green" : "red";
+  };
 
   return (
     <div style={{ padding: "20px" }}>
-      <h2>Resumen de Entregas</h2>
-      <div style={{ display: "flex", gap: "20px", marginTop: "20px" }}>
-        <div style={cardStyle}>
-          <h3>Total Órdenes</h3>
-          <p>{resumen.totalOrdenes}</p>
-        </div>
-        <div style={cardStyle}>
-          <h3>Total Productos</h3>
-          <p>{resumen.totalProductos}</p>
-        </div>
-        <div style={cardStyle}>
-          <h3>Total Clientes</h3>
-          <p>{resumen.totalClientes}</p>
-        </div>
-        <div style={cardStyle}>
-          <h3>Última Entrega</h3>
-          <p>{resumen.ultimaEntrega}</p>
-        </div>
+      <h2>📊 Dashboard del Administrador</h2>
+
+      {/* Tabla de órdenes */}
+      <table border="1" cellPadding="8" style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead style={{ backgroundColor: "#f0f0f0" }}>
+          <tr>
+            <th>Cliente</th>
+            <th>Producto</th>
+            <th>Fecha</th>
+            <th>Hora</th>
+            <th>Registrado por</th>
+            <th>Estado</th>
+            <th>Mensajero</th>
+            <th>Vehículo</th>
+            <th>Tiempo Estimado</th>
+            <th>Tiempo Real</th>
+          </tr>
+        </thead>
+        <tbody>
+          {ordenes.length === 0 && (
+            <tr>
+              <td colSpan="10" style={{ textAlign: "center" }}>No hay órdenes registradas</td>
+            </tr>
+          )}
+          {ordenes.map((orden) => (
+            <tr key={orden.id}>
+              <td>{orden.cliente}</td>
+              <td>{orden.producto}</td>
+              <td>{orden.fecha}</td>
+              <td>{orden.hora}</td>
+              <td>{orden.usuario}</td>
+              <td>
+                {orden.entregado
+                  ? "✅ Entregado"
+                  : orden.recibida
+                  ? "📦 Recibida"
+                  : "⏳ Pendiente"}
+              </td>
+              <td>{orden.mensajero || "N/A"}</td>
+              <td>{orden.vehiculo || "N/A"}</td>
+              <td>
+                {orden.tiempoEstimado
+                  ? `${orden.tiempoEstimado} min`
+                  : "N/A"}
+              </td>
+              <td style={{ color: getTiempoRealColor(orden.tiempoReal, orden.tiempoEstimado), fontWeight: "bold" }}>
+                {orden.tiempoReal !== undefined && orden.tiempoReal !== null
+                  ? `${orden.tiempoReal} min`
+                  : orden.entregado
+                  ? "No calculado"
+                  : "Pendiente"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {/* Mapa en tiempo real */}
+      <h3 style={{ marginTop: "30px" }}>🗺 Ubicación de Mensajeros</h3>
+      <div style={{ height: "500px", width: "100%", marginTop: "10px" }}>
+        <MapContainer
+          center={[18.4861, -69.9312]} // Centro en Santo Domingo
+          zoom={12}
+          style={{ height: "100%", width: "100%" }}
+        >
+          <TileLayer
+            attribution='&copy; OpenStreetMap contributors'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
+          {mensajeros.map((m, index) => (
+            <Marker key={index} position={[m.lat, m.lng]} icon={mensajeroIcon}>
+              <Popup>
+                🚴 Mensajero: {m.nombre} <br />
+                Última actualización: {m.hora}
+              </Popup>
+            </Marker>
+          ))}
+        </MapContainer>
       </div>
     </div>
   );
 }
-
-const cardStyle = {
-  background: "#f0f0f0",
-  padding: "20px",
-  borderRadius: "8px",
-  flex: 1,
-  boxShadow: "0 2px 5px rgba(0, 0, 0, 0.1)",
-  textAlign: "center",
-};
 
 export default Dashboard;

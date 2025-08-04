@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { rutasPredefinidas } from "../data/rutasPredefinidas"; // 📌 Importamos las rutas
 
 function OrdenesEntrega() {
   const [cliente, setCliente] = useState("");
@@ -6,6 +7,7 @@ function OrdenesEntrega() {
   const [monto, setMonto] = useState("");
   const [fecha, setFecha] = useState("");
   const [hora, setHora] = useState("");
+  const [rutaSeleccionada, setRutaSeleccionada] = useState(""); // 📌 Nuevo estado
   const [ordenes, setOrdenes] = useState([]);
   const [filtroFecha, setFiltroFecha] = useState("");
 
@@ -18,25 +20,18 @@ function OrdenesEntrega() {
   const rol = usuarioActivo?.rol;
 
   useEffect(() => {
-  const cargarOrdenes = () => {
-    const ordenesGuardadas = JSON.parse(localStorage.getItem("ordenesEntrega")) || [];
-    setOrdenes(ordenesGuardadas);
-  };
+    const cargarOrdenes = () => {
+      const ordenesGuardadas = JSON.parse(localStorage.getItem("ordenesEntrega")) || [];
+      setOrdenes(ordenesGuardadas);
+    };
 
-  // Cargar inicialmente
-  cargarOrdenes();
-
-  // Escuchar cambios en localStorage
-  window.addEventListener("storage", cargarOrdenes);
-
-  return () => {
-    window.removeEventListener("storage", cargarOrdenes);
-  };
-}, []);
-
+    cargarOrdenes();
+    window.addEventListener("storage", cargarOrdenes);
+    return () => window.removeEventListener("storage", cargarOrdenes);
+  }, []);
 
   const registrarOrden = () => {
-    if (!cliente || !producto || !monto || !fecha || !hora) {
+    if (!cliente || !producto || !monto || !fecha || !hora || !rutaSeleccionada) {
       alert("Por favor completa todos los campos.");
       return;
     }
@@ -51,17 +46,23 @@ function OrdenesEntrega() {
       entregado: false,
       recibida: false,
       fechaRecibida: null,
+      rutaId: parseInt(rutaSeleccionada), // 📌 Guardamos la ID de la ruta
       usuario: usuarioActivo?.nombre,
+      horaRegistro: new Date().toISOString(), // 📌 NUEVO
+
     };
 
     const nuevasOrdenes = [...ordenes, nuevaOrden];
     setOrdenes(nuevasOrdenes);
     localStorage.setItem("ordenesEntrega", JSON.stringify(nuevasOrdenes));
+
+    // Limpiar campos
     setCliente("");
     setProducto("");
     setMonto("");
     setFecha("");
     setHora("");
+    setRutaSeleccionada("");
   };
 
   const marcarComoEntregado = (id) => {
@@ -73,8 +74,6 @@ function OrdenesEntrega() {
   };
 
   const marcarComoRecibida = (id) => {
-    const usuarioActivo = JSON.parse(localStorage.getItem("usuarioActivo"));
-
     const actualizadas = ordenes.map((orden) =>
       orden.id === id
         ? {
@@ -85,7 +84,6 @@ function OrdenesEntrega() {
           }
         : orden
     );
-
     setOrdenes(actualizadas);
     localStorage.setItem("ordenesEntrega", JSON.stringify(actualizadas));
   };
@@ -110,7 +108,6 @@ function OrdenesEntrega() {
     const nuevasOrdenes = ordenes.map((orden) => {
       if (orden.id === ordenEnEdicion) {
         const cambios = [];
-
         if (orden.cliente !== editCliente) cambios.push("cliente");
         if (orden.producto !== editProducto) cambios.push("producto");
         if (orden.monto !== editMonto) cambios.push("monto");
@@ -148,6 +145,17 @@ function OrdenesEntrega() {
       <input type="number" placeholder="Monto" value={monto} onChange={(e) => setMonto(e.target.value)} />
       <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
       <input type="time" value={hora} onChange={(e) => setHora(e.target.value)} />
+
+      {/* 📌 Selector de ruta */}
+      <select value={rutaSeleccionada} onChange={(e) => setRutaSeleccionada(e.target.value)}>
+        <option value="">Selecciona una ruta</option>
+        {rutasPredefinidas.map((ruta) => (
+          <option key={ruta.id} value={ruta.id}>
+            {ruta.origen} → {ruta.destino}
+          </option>
+        ))}
+      </select>
+
       {(rol === "operador" || rol === "admin") && (
         <button onClick={registrarOrden}>Registrar</button>
       )}
@@ -159,31 +167,22 @@ function OrdenesEntrega() {
       <ul>
         {ordenesFiltradas.map((orden) => (
           <li key={orden.id}>
-            Fecha: {orden.fecha} {orden.hora} | Cliente: {orden.cliente} | Producto: {orden.producto} | Monto: ${orden.monto} | <strong>Registrado por:</strong> {orden.usuario} |{" "}
+            Fecha: {orden.fecha} {orden.hora} | Cliente: {orden.cliente} | Producto: {orden.producto} | 
+            Monto: ${orden.monto} | Registrado por: {orden.usuario} |{" "}
+            Ruta: {rutasPredefinidas.find(r => r.id === orden.rutaId)?.origen} →
+            {rutasPredefinidas.find(r => r.id === orden.rutaId)?.destino}
+            {" "}
             {orden.entregado ? (
-  <>
-    <span>Entregado</span>{" "}
-    {orden.recibida ? (
-      <span style={{ marginLeft: "10px" }}>
-        ✅ Recibida por: {orden.mensajero} ({orden.fechaRecibida})
-      </span>
-    ) : (
-      rol === "mensajero" && (
-        <button onClick={() => marcarComoRecibida(orden.id)}>
-          Marcar como Recibida
-        </button>
-      )
-    )}
-  </>
-) : (
-  (rol === "operador" || rol === "admin") && (
-    <>
-      <button onClick={() => marcarComoEntregado(orden.id)}>Marcar como Entregado</button>{" "}
-      <button onClick={() => editarOrden(orden)}>Editar</button>
-      <button onClick={() => eliminarOrden(orden.id)}>Eliminar</button>
-    </>
-  )
-)}
+              <span>Entregado</span>
+            ) : orden.recibida ? (
+              (rol === "admin" || rol === "mensajero") && (
+                <button onClick={() => marcarComoEntregado(orden.id)}>Marcar como Entregado</button>
+              )
+            ) : (
+              (rol === "admin" || rol === "mensajero") && (
+                <button onClick={() => marcarComoRecibida(orden.id)}>Orden Recibida</button>
+              )
+            )}
 
             {(rol === "operador" || rol === "admin") && !orden.entregado && (
               <>

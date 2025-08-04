@@ -1,100 +1,166 @@
 import { useState, useEffect } from "react";
+import { rutasPredefinidas } from "../data/rutasPredefinidas";
 
 function Entregas() {
   const [ordenes, setOrdenes] = useState([]);
   const usuarioActivo = JSON.parse(localStorage.getItem("usuarioActivo"));
 
-  const cargarOrdenes = () => {
-    const data = localStorage.getItem("ordenesEntrega");
-    if (data) {
-      try {
-        const todas = JSON.parse(data);
-        const pendientes = todas.filter((orden) => !orden.entregado);
-        setOrdenes(pendientes);
-        console.log("Órdenes cargadas:", pendientes); // ✅ Verificación en consola
-      } catch (error) {
-        console.error("Error al cargar órdenes:", error);
-      }
-    } else {
-      setOrdenes([]);
-    }
-  };
-
   useEffect(() => {
-    cargarOrdenes();
-
-    // Escuchar cambios en localStorage hechos por otras pestañas/usuarios
-    window.addEventListener("storage", cargarOrdenes);
-
-    // Opcional: recargar cada cierto tiempo por seguridad
-    const intervalo = setInterval(() => {
-      cargarOrdenes();
-    }, 3000); // cada 3 segundos
-
-    return () => {
-      window.removeEventListener("storage", cargarOrdenes);
-      clearInterval(intervalo);
+    const cargarOrdenes = () => {
+      const ordenesGuardadas = JSON.parse(localStorage.getItem("ordenesEntrega")) || [];
+      setOrdenes(ordenesGuardadas);
     };
+
+    cargarOrdenes();
+    window.addEventListener("storage", cargarOrdenes);
+    return () => window.removeEventListener("storage", cargarOrdenes);
+  }, []);
+
+  // 📍 Geolocalización en tiempo real para el mensajero
+  useEffect(() => {
+    if ("geolocation" in navigator) {
+      navigator.geolocation.watchPosition(
+        (position) => {
+          const ubicacion = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+            timestamp: Date.now(),
+            mensajero: usuarioActivo?.nombre || "Desconocido",
+          };
+          localStorage.setItem("ubicacionMensajero", JSON.stringify(ubicacion));
+        },
+        (error) => {
+          console.error("Error al obtener ubicación:", error);
+        },
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
+      );
+    } else {
+      console.log("Geolocalización no soportada en este navegador");
+    }
   }, []);
 
   const marcarComoRecibida = (id) => {
-    const actualizadas = JSON.parse(localStorage.getItem("ordenesEntrega")).map((orden) =>
+    let vehiculo = prompt("¿Vas en moto o carro? (escribe 'moto' o 'carro')");
+    if (!vehiculo) vehiculo = "moto";
+    vehiculo = vehiculo.toLowerCase().includes("carro") ? "carro" : "moto";
+
+    const tiempoEstimado = calcularTiempoEstimado(vehiculo);
+
+    const actualizadas = ordenes.map((orden) =>
       orden.id === id
         ? {
             ...orden,
             recibida: true,
             fechaRecibida: new Date().toLocaleString(),
             mensajero: usuarioActivo?.nombre || "Desconocido",
+            vehiculo,
+            tiempoEstimado,
           }
         : orden
     );
-
+    setOrdenes(actualizadas);
     localStorage.setItem("ordenesEntrega", JSON.stringify(actualizadas));
-    cargarOrdenes();
   };
 
   const marcarComoEntregada = (id) => {
-    const actualizadas = JSON.parse(localStorage.getItem("ordenesEntrega")).map((orden) =>
-      orden.id === id ? { ...orden, entregado: true } : orden
-    );
+  const horaEntrega = new Date();
 
-    localStorage.setItem("ordenesEntrega", JSON.stringify(actualizadas));
-    cargarOrdenes();
+  const actualizadas = ordenes.map((orden) =>
+    orden.id === id
+      ? {
+          ...orden,
+          entregado: true,
+          horaEntrega: horaEntrega.toISOString(), // 📌 Guarda fecha/hora de entrega
+          tiempoReal: orden.fechaRecibida
+            ? Math.round(
+                (horaEntrega - new Date(orden.fechaRecibida)) / 60000
+              ) // Minutos reales
+            : null,
+        }
+      : orden
+  );
+
+  setOrdenes(actualizadas);
+  localStorage.setItem("ordenesEntrega", JSON.stringify(actualizadas));
+};
+
+
+  const calcularTiempoEstimado = (vehiculo) => {
+    let tiempoBase = 60; // Tiempo base en minutos
+    if (vehiculo === "moto") {
+      tiempoBase = tiempoBase * 0.8; // 20% más rápido
+    }
+    return Math.round(tiempoBase);
   };
+
+  const verRutaOptimizada = (rutaId) => {
+    const ruta = rutasPredefinidas.find(r => r.id === rutaId);
+    if (!ruta) {
+      alert("Ruta no encontrada");
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const latOrigen = pos.coords.latitude;
+        const lngOrigen = pos.coords.longitude;
+        const urlMapa = `https://www.google.com/maps/dir/?api=1&origin=${latOrigen},${lngOrigen}&destination=${ruta.paradaSD.lat},${ruta.paradaSD.lng}&travelmode=driving`;
+        window.open(urlMapa, "_blank");
+      },
+      (error) => {
+        alert("No se pudo obtener la ubicación actual");
+        console.error(error);
+      }
+    );
+  };
+
+  const ordenesPendientes = ordenes.filter((orden) => !orden.entregado);
 
   return (
     <div>
       <h2>Órdenes asignadas</h2>
-      {ordenes.length === 0 ? (
-        <p>No hay órdenes pendientes.</p>
-      ) : (
-        <ul>
-          {ordenes.map((orden) => (
-            <li key={orden.id} style={{ marginBottom: "10px" }}>
-              📦 <strong>{orden.producto}</strong> para {orden.cliente} — {orden.fecha} {orden.hora}
-              <br />
-              {orden.recibida ? (
-                <>
-                  <span style={{ color: "green" }}>
-                    ✅ Recibida por {orden.mensajero} ({orden.fechaRecibida})
-                  </span>
-                  {!orden.entregado && (
-                    <div>
-                      <button onClick={() => marcarComoEntregada(orden.id)}>
-                        📬 Marcar como Entregada
-                      </button>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <button onClick={() => marcarComoRecibida(orden.id)}>
-                  ✅ Marcar como Recibida
+      {ordenesPendientes.length === 0 && <p>No hay órdenes pendientes.</p>}
+      <ul>
+        {ordenesPendientes.map((orden) => (
+          <li key={orden.id} style={{ marginBottom: "15px" }}>
+            📦 <strong>{orden.producto}</strong> para {orden.cliente} — {orden.fecha} {orden.hora}
+            <br />
+            {orden.vehiculo && (
+              <span style={{ color: "blue" }}>
+                🚚 Vehículo: {orden.vehiculo} | ⏱ Tiempo estimado: {orden.tiempoEstimado} min
+              </span>
+            )}
+            <br />
+
+            {orden.recibida ? (
+              <>
+                <span style={{ color: "green" }}>
+                  ✅ Recibida por {orden.mensajero} ({orden.fechaRecibida})
+                </span>
+                {!orden.entregado && (
+                  <div>
+                    <button onClick={() => marcarComoEntregada(orden.id)}>
+                      📬 Marcar como Entregada
+                    </button>
+                  </div>
+                )}
+              </>
+            ) : (
+              <button onClick={() => marcarComoRecibida(orden.id)}>
+                ✅ Marcar como Recibida
+              </button>
+            )}
+
+            {orden.rutaId && (
+              <div style={{ marginTop: "5px" }}>
+                <button onClick={() => verRutaOptimizada(orden.rutaId)}>
+                  📍 Ver ruta optimizada
                 </button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
