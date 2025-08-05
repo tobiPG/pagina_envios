@@ -3,17 +3,17 @@ import { rutasPredefinidas } from "../data/rutasPredefinidas"; // 📌 Importamo
 
 function OrdenesEntrega() {
   const [cliente, setCliente] = useState("");
-  const [producto, setProducto] = useState("");
+  const [numeroFactura, setNumeroFactura] = useState(""); // 📌 cambiado
   const [monto, setMonto] = useState("");
   const [fecha, setFecha] = useState("");
   const [hora, setHora] = useState("");
-  const [rutaSeleccionada, setRutaSeleccionada] = useState(""); // 📌 Nuevo estado
+  const [rutaSeleccionada, setRutaSeleccionada] = useState("");
   const [ordenes, setOrdenes] = useState([]);
   const [filtroFecha, setFiltroFecha] = useState("");
 
   const [ordenEnEdicion, setOrdenEnEdicion] = useState(null);
   const [editCliente, setEditCliente] = useState("");
-  const [editProducto, setEditProducto] = useState("");
+  const [editNumeroFactura, setEditNumeroFactura] = useState(""); // 📌 cambiado
   const [editMonto, setEditMonto] = useState("");
 
   const usuarioActivo = JSON.parse(localStorage.getItem("usuarioActivo"));
@@ -24,14 +24,13 @@ function OrdenesEntrega() {
       const ordenesGuardadas = JSON.parse(localStorage.getItem("ordenesEntrega")) || [];
       setOrdenes(ordenesGuardadas);
     };
-
     cargarOrdenes();
     window.addEventListener("storage", cargarOrdenes);
     return () => window.removeEventListener("storage", cargarOrdenes);
   }, []);
 
   const registrarOrden = () => {
-    if (!cliente || !producto || !monto || !fecha || !hora || !rutaSeleccionada) {
+    if (!cliente || !numeroFactura || !monto || !fecha || !hora || !rutaSeleccionada) {
       alert("Por favor completa todos los campos.");
       return;
     }
@@ -39,26 +38,27 @@ function OrdenesEntrega() {
     const nuevaOrden = {
       id: Date.now(),
       cliente,
-      producto,
+      numeroFactura, // 📌 cambiado
       monto,
       fecha,
       hora,
       entregado: false,
       recibida: false,
       fechaRecibida: null,
-      rutaId: parseInt(rutaSeleccionada), // 📌 Guardamos la ID de la ruta
+      fechaEntregada: null,
+      tiempoTotalEntrega: null,
+      rutaId: parseInt(rutaSeleccionada),
       usuario: usuarioActivo?.nombre,
-      horaRegistro: new Date().toISOString(), // 📌 NUEVO
-
+      rolUsuario: rol,
+      horaRegistro: new Date().toISOString(),
     };
 
     const nuevasOrdenes = [...ordenes, nuevaOrden];
     setOrdenes(nuevasOrdenes);
     localStorage.setItem("ordenesEntrega", JSON.stringify(nuevasOrdenes));
 
-    // Limpiar campos
     setCliente("");
-    setProducto("");
+    setNumeroFactura(""); // 📌 cambiado
     setMonto("");
     setFecha("");
     setHora("");
@@ -66,9 +66,19 @@ function OrdenesEntrega() {
   };
 
   const marcarComoEntregado = (id) => {
-    const actualizadas = ordenes.map((orden) =>
-      orden.id === id ? { ...orden, entregado: true } : orden
-    );
+    const actualizadas = ordenes.map((orden) => {
+      if (orden.id === id) {
+        const fechaEntregada = new Date().toISOString();
+        let tiempoTotal = null;
+        if (orden.fechaRecibida) {
+          const inicio = new Date(orden.fechaRecibida).getTime();
+          const fin = new Date(fechaEntregada).getTime();
+          tiempoTotal = ((fin - inicio) / 60000).toFixed(2);
+        }
+        return { ...orden, entregado: true, fechaEntregada, tiempoTotalEntrega: tiempoTotal };
+      }
+      return orden;
+    });
     setOrdenes(actualizadas);
     localStorage.setItem("ordenesEntrega", JSON.stringify(actualizadas));
   };
@@ -79,7 +89,7 @@ function OrdenesEntrega() {
         ? {
             ...orden,
             recibida: true,
-            fechaRecibida: new Date().toLocaleString(),
+            fechaRecibida: new Date().toISOString(),
             mensajero: usuarioActivo?.nombre || "sin nombre",
           }
         : orden
@@ -97,37 +107,33 @@ function OrdenesEntrega() {
   const editarOrden = (orden) => {
     setOrdenEnEdicion(orden.id);
     setEditCliente(orden.cliente);
-    setEditProducto(orden.producto);
+    setEditNumeroFactura(orden.numeroFactura); // 📌 cambiado
     setEditMonto(orden.monto);
   };
 
   const guardarEdicion = () => {
     const usuarioEditor = prompt("Nombre del usuario que edita:");
     const fechaHora = new Date().toLocaleString();
-
     const nuevasOrdenes = ordenes.map((orden) => {
       if (orden.id === ordenEnEdicion) {
         const cambios = [];
         if (orden.cliente !== editCliente) cambios.push("cliente");
-        if (orden.producto !== editProducto) cambios.push("producto");
+        if (orden.numeroFactura !== editNumeroFactura) cambios.push("numeroFactura"); // 📌 cambiado
         if (orden.monto !== editMonto) cambios.push("monto");
-
         const nuevoHistorial = [
           ...(orden.historial || []),
           { usuario: usuarioEditor, fechaHora, cambios },
         ];
-
         return {
           ...orden,
           cliente: editCliente,
-          producto: editProducto,
+          numeroFactura: editNumeroFactura, // 📌 cambiado
           monto: editMonto,
           historial: nuevoHistorial,
         };
       }
       return orden;
     });
-
     setOrdenes(nuevasOrdenes);
     localStorage.setItem("ordenesEntrega", JSON.stringify(nuevasOrdenes));
     setOrdenEnEdicion(null);
@@ -141,12 +147,11 @@ function OrdenesEntrega() {
     <div>
       <h2>Registrar Orden de Entrega</h2>
       <input type="text" placeholder="Cliente" value={cliente} onChange={(e) => setCliente(e.target.value)} />
-      <input type="text" placeholder="Producto" value={producto} onChange={(e) => setProducto(e.target.value)} />
+      <input type="text" placeholder="Número de Factura" value={numeroFactura} onChange={(e) => setNumeroFactura(e.target.value)} /> {/* 📌 cambiado */}
       <input type="number" placeholder="Monto" value={monto} onChange={(e) => setMonto(e.target.value)} />
       <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
       <input type="time" value={hora} onChange={(e) => setHora(e.target.value)} />
 
-      {/* 📌 Selector de ruta */}
       <select value={rutaSeleccionada} onChange={(e) => setRutaSeleccionada(e.target.value)}>
         <option value="">Selecciona una ruta</option>
         {rutasPredefinidas.map((ruta) => (
@@ -156,7 +161,7 @@ function OrdenesEntrega() {
         ))}
       </select>
 
-      {(rol === "operador" || rol === "admin") && (
+      {(rol === "operador" || rol === "administrador") && (
         <button onClick={registrarOrden}>Registrar</button>
       )}
 
@@ -167,11 +172,10 @@ function OrdenesEntrega() {
       <ul>
         {ordenesFiltradas.map((orden) => (
           <li key={orden.id}>
-            Fecha: {orden.fecha} {orden.hora} | Cliente: {orden.cliente} | Producto: {orden.producto} | 
+            Fecha: {orden.fecha} {orden.hora} | Cliente: {orden.cliente} | Nº Factura: {orden.numeroFactura} | {/* 📌 cambiado */}
             Monto: ${orden.monto} | Registrado por: {orden.usuario} |{" "}
             Ruta: {rutasPredefinidas.find(r => r.id === orden.rutaId)?.origen} →
-            {rutasPredefinidas.find(r => r.id === orden.rutaId)?.destino}
-            {" "}
+            {rutasPredefinidas.find(r => r.id === orden.rutaId)?.destino}{" "}
             {orden.entregado ? (
               <span>Entregado</span>
             ) : orden.recibida ? (
@@ -219,24 +223,9 @@ function OrdenesEntrega() {
       {ordenEnEdicion && (
         <div style={{ marginTop: "20px", border: "1px solid gray", padding: "10px" }}>
           <h4>Editar Orden</h4>
-          <input
-            type="text"
-            placeholder="Cliente"
-            value={editCliente}
-            onChange={(e) => setEditCliente(e.target.value)}
-          />
-          <input
-            type="text"
-            placeholder="Producto"
-            value={editProducto}
-            onChange={(e) => setEditProducto(e.target.value)}
-          />
-          <input
-            type="number"
-            placeholder="Monto"
-            value={editMonto}
-            onChange={(e) => setEditMonto(e.target.value)}
-          />
+          <input type="text" placeholder="Cliente" value={editCliente} onChange={(e) => setEditCliente(e.target.value)} />
+          <input type="text" placeholder="Número de Factura" value={editNumeroFactura} onChange={(e) => setEditNumeroFactura(e.target.value)} /> {/* 📌 cambiado */}
+          <input type="number" placeholder="Monto" value={editMonto} onChange={(e) => setEditMonto(e.target.value)} />
           <button onClick={guardarEdicion}>Guardar Cambios</button>
           <button onClick={() => setOrdenEnEdicion(null)}>Cancelar</button>
         </div>
@@ -246,5 +235,3 @@ function OrdenesEntrega() {
 }
 
 export default OrdenesEntrega;
-
-

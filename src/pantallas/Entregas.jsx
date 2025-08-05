@@ -1,5 +1,9 @@
 import { useState, useEffect } from "react";
 import { rutasPredefinidas } from "../data/rutasPredefinidas";
+import { getFirestore, doc, setDoc } from "firebase/firestore";
+import { app } from "../firebaseConfig";
+
+const db = getFirestore(app);
 
 function Entregas() {
   const [ordenes, setOrdenes] = useState([]);
@@ -10,32 +14,30 @@ function Entregas() {
       const ordenesGuardadas = JSON.parse(localStorage.getItem("ordenesEntrega")) || [];
       setOrdenes(ordenesGuardadas);
     };
-
     cargarOrdenes();
     window.addEventListener("storage", cargarOrdenes);
     return () => window.removeEventListener("storage", cargarOrdenes);
   }, []);
 
-  // 📍 Geolocalización en tiempo real para el mensajero
+  // 📍 Geolocalización en tiempo real y guardado en Firestore
   useEffect(() => {
     if ("geolocation" in navigator) {
       navigator.geolocation.watchPosition(
-        (position) => {
+        async (position) => {
           const ubicacion = {
+            nombre: usuarioActivo?.nombre || "Desconocido",
             lat: position.coords.latitude,
             lng: position.coords.longitude,
-            timestamp: Date.now(),
-            mensajero: usuarioActivo?.nombre || "Desconocido",
+            ultimaActualizacion: new Date().toISOString()
           };
           localStorage.setItem("ubicacionMensajero", JSON.stringify(ubicacion));
+          await setDoc(doc(db, "ubicacionesMensajeros", usuarioActivo?.nombre || "desconocido"), ubicacion);
         },
         (error) => {
           console.error("Error al obtener ubicación:", error);
         },
         { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
       );
-    } else {
-      console.log("Geolocalización no soportada en este navegador");
     }
   }, []);
 
@@ -63,32 +65,27 @@ function Entregas() {
   };
 
   const marcarComoEntregada = (id) => {
-  const horaEntrega = new Date();
-
-  const actualizadas = ordenes.map((orden) =>
-    orden.id === id
-      ? {
-          ...orden,
-          entregado: true,
-          horaEntrega: horaEntrega.toISOString(), // 📌 Guarda fecha/hora de entrega
-          tiempoReal: orden.fechaRecibida
-            ? Math.round(
-                (horaEntrega - new Date(orden.fechaRecibida)) / 60000
-              ) // Minutos reales
-            : null,
-        }
-      : orden
-  );
-
-  setOrdenes(actualizadas);
-  localStorage.setItem("ordenesEntrega", JSON.stringify(actualizadas));
-};
-
+    const horaEntrega = new Date();
+    const actualizadas = ordenes.map((orden) =>
+      orden.id === id
+        ? {
+            ...orden,
+            entregado: true,
+            horaEntrega: horaEntrega.toISOString(),
+            tiempoReal: orden.fechaRecibida
+              ? Math.round((horaEntrega - new Date(orden.fechaRecibida)) / 60000)
+              : null,
+          }
+        : orden
+    );
+    setOrdenes(actualizadas);
+    localStorage.setItem("ordenesEntrega", JSON.stringify(actualizadas));
+  };
 
   const calcularTiempoEstimado = (vehiculo) => {
-    let tiempoBase = 60; // Tiempo base en minutos
+    let tiempoBase = 60;
     if (vehiculo === "moto") {
-      tiempoBase = tiempoBase * 0.8; // 20% más rápido
+      tiempoBase = tiempoBase * 0.8;
     }
     return Math.round(tiempoBase);
   };
@@ -99,7 +96,6 @@ function Entregas() {
       alert("Ruta no encontrada");
       return;
     }
-
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const latOrigen = pos.coords.latitude;
@@ -131,7 +127,6 @@ function Entregas() {
               </span>
             )}
             <br />
-
             {orden.recibida ? (
               <>
                 <span style={{ color: "green" }}>
@@ -150,7 +145,6 @@ function Entregas() {
                 ✅ Marcar como Recibida
               </button>
             )}
-
             {orden.rutaId && (
               <div style={{ marginTop: "5px" }}>
                 <button onClick={() => verRutaOptimizada(orden.rutaId)}>

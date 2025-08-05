@@ -10,6 +10,9 @@ import ETA from "../pantallas/ETA";
 import RutaOptimizada from "../pantallas/RutaOptimizada";
 import HistorialCambios from "../pantallas/HistorialCambios";
 import Entregas from "../pantallas/Entregas"; // Asegúrate de importar Entregas
+import EstadisticasAdmin from "../pantallas/EstadisticasAdmin"; // 📌 Importar el nuevo archivo
+import EstadisticasOperador from "../pantallas/EstadisticasOperador";
+
 
 function Rutas() {
   const location = useLocation();
@@ -30,16 +33,19 @@ function Rutas() {
         <Route path="/" element={<Login />} />
 
         {usuario?.rol === "administrador" && (
-          <>
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/ordenes" element={<OrdenesEntrega />} />
-            <Route path="/clientes" element={<RegistroClientes />} />
-            <Route path="/historial" element={<HistorialCambios />} />
-            <Route path="/eta" element={<ETA />} />
-            <Route path="/ruta" element={<RutaOptimizada />} />
-            <Route path="*" element={<Navigate to="/dashboard" />} />
-          </>
-        )}
+  <>
+    <Route path="/dashboard" element={<Dashboard />} />
+    <Route path="/estadisticas" element={<EstadisticasAdmin />} /> {/* 📊 Nueva ruta */}
+    <Route path="/estadisticas-operador" element={<EstadisticasOperador />} /> {/* 📊 Nueva ruta */}
+    <Route path="/ordenes" element={<OrdenesEntrega />} />
+    <Route path="/clientes" element={<RegistroClientes />} />
+    <Route path="/historial" element={<HistorialCambios />} />
+    <Route path="/eta" element={<ETA />} />
+    <Route path="/ruta" element={<RutaOptimizada />} />
+    <Route path="*" element={<Navigate to="/dashboard" />} />
+  </>
+)}
+
 
         {usuario?.rol === "operador" && (
           <>

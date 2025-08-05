@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
+import { db } from "../firebaseConfig";
+import { collection, onSnapshot } from "firebase/firestore";
 
 // Icono personalizado para el mensajero
 const mensajeroIcon = new L.Icon({
@@ -16,13 +18,20 @@ function Dashboard() {
   const [mensajeros, setMensajeros] = useState([]);
 
   useEffect(() => {
-    // Cargar órdenes
+    // Escuchar cambios en órdenes desde localStorage (puedes migrar a Firestore luego)
     const datos = JSON.parse(localStorage.getItem("ordenesEntrega")) || [];
     setOrdenes(datos);
 
-    // Cargar ubicaciones de mensajeros
-    const ubicaciones = JSON.parse(localStorage.getItem("ubicacionesMensajeros")) || [];
-    setMensajeros(ubicaciones);
+    // Escuchar ubicaciones en tiempo real desde Firestore
+    const unsub = onSnapshot(collection(db, "ubicacionesMensajeros"), (snapshot) => {
+      const ubicaciones = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setMensajeros(ubicaciones);
+    });
+
+    return () => unsub();
   }, []);
 
   // Color del tiempo real comparado con el estimado
@@ -41,7 +50,7 @@ function Dashboard() {
         <thead style={{ backgroundColor: "#f0f0f0" }}>
           <tr>
             <th>Cliente</th>
-            <th>Producto</th>
+            <th>Factura</th>
             <th>Fecha</th>
             <th>Hora</th>
             <th>Registrado por</th>
@@ -103,11 +112,11 @@ function Dashboard() {
             attribution='&copy; OpenStreetMap contributors'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
-          {mensajeros.map((m, index) => (
-            <Marker key={index} position={[m.lat, m.lng]} icon={mensajeroIcon}>
+          {mensajeros.map((m) => (
+            <Marker key={m.id} position={[m.lat, m.lng]} icon={mensajeroIcon}>
               <Popup>
                 🚴 Mensajero: {m.nombre} <br />
-                Última actualización: {m.hora}
+                Última actualización: {new Date(m.timestamp).toLocaleString()}
               </Popup>
             </Marker>
           ))}

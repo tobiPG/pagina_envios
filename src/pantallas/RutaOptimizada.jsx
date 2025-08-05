@@ -1,58 +1,90 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { MapContainer, TileLayer, Marker, Polyline, Popup } from "react-leaflet";
+import "leaflet/dist/leaflet.css";
+import L from "leaflet";
+
+// 📍 Ícono personalizado para mensajero
+const iconMensajero = new L.Icon({
+  iconUrl: "https://cdn-icons-png.flaticon.com/512/684/684908.png",
+  iconSize: [32, 32],
+  iconAnchor: [16, 32],
+});
 
 function RutaOptimizada() {
-  const [entregasSeleccionadas, setEntregasSeleccionadas] = useState([]);
+  const [ordenes, setOrdenes] = useState([]);
+  const usuarioActivo = JSON.parse(localStorage.getItem("usuarioActivo"));
 
-  const entregasDisponibles = [
-    { id: 1, direccion: "Av. Bolívar, Santo Domingo" },
-    { id: 2, direccion: "Calle El Conde, Zona Colonial" },
-    { id: 3, direccion: "Av. Winston Churchill, Piantini" },
-  ];
-
-  const toggleEntrega = (id) => {
-    setEntregasSeleccionadas((prev) =>
-      prev.includes(id)
-        ? prev.filter((item) => item !== id)
-        : [...prev, id]
+  useEffect(() => {
+    const ordenesGuardadas = JSON.parse(localStorage.getItem("ordenesEntrega")) || [];
+    // 📌 Filtrar solo las órdenes asignadas a este mensajero y que no estén entregadas
+    const ordenesMensajero = ordenesGuardadas.filter(
+      (orden) => orden.mensajero === usuarioActivo?.nombre && !orden.entregado
     );
-  };
-
-  const generarRuta = () => {
-    const direcciones = entregasSeleccionadas
-      .map((id) => {
-        const entrega = entregasDisponibles.find((e) => e.id === id);
-        return entrega?.direccion;
-      })
-      .filter(Boolean)
-      .join("/");
-
-    return `https://www.google.com/maps/dir/${encodeURI(direcciones)}`;
-  };
+    setOrdenes(ordenesMensajero);
+  }, [usuarioActivo?.nombre]);
 
   return (
     <div>
       <h2>Ruta Optimizada</h2>
-      <ul>
-        {entregasDisponibles.map((entrega) => (
-          <li key={entrega.id}>
-            <label>
-              <input
-                type="checkbox"
-                checked={entregasSeleccionadas.includes(entrega.id)}
-                onChange={() => toggleEntrega(entrega.id)}
+
+      {ordenes.length === 0 ? (
+        <p>No tienes paradas asignadas.</p>
+      ) : (
+        <>
+          <ul>
+            {ordenes.map((orden) => (
+              <li key={orden.id}>
+                📦 {orden.producto} — {orden.cliente} <br />
+                📍 {orden.direccion || "Dirección no especificada"}
+              </li>
+            ))}
+          </ul>
+
+          {/* 🗺 Mapa */}
+          <MapContainer
+            center={[18.4861, -69.9312]} // Centro en Santo Domingo
+            zoom={12}
+            style={{ height: "400px", width: "100%", marginTop: "20px" }}
+          >
+            <TileLayer
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            />
+
+            {/* 📍 Marcadores */}
+            {ordenes.map((orden, idx) =>
+              orden.coordenadas ? (
+                <Marker
+                  key={idx}
+                  position={orden.coordenadas}
+                  icon={iconMensajero}
+                >
+                  <Popup>
+                    <strong>{orden.producto}</strong>
+                    <br />
+                    Cliente: {orden.cliente}
+                    <br />
+                    Dirección: {orden.direccion}
+                  </Popup>
+                </Marker>
+              ) : null
+            )}
+
+            {/* 🔗 Línea de la ruta */}
+            {ordenes.length > 1 && (
+              <Polyline
+                positions={ordenes
+                  .filter((o) => o.coordenadas)
+                  .map((o) => o.coordenadas)}
+                color="blue"
               />
-              {entrega.direccion}
-            </label>
-          </li>
-        ))}
-      </ul>
-      {entregasSeleccionadas.length > 1 && (
-        <a href={generarRuta()} target="_blank" rel="noopener noreferrer">
-          Ver ruta optimizada en Google Maps
-        </a>
+            )}
+          </MapContainer>
+        </>
       )}
     </div>
   );
 }
 
 export default RutaOptimizada;
+
