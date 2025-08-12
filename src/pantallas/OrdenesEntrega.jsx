@@ -156,6 +156,7 @@ export default function OrdenesEntrega() {
       await updateDoc(doc(db, "ordenes", orderId), {
         asignadoUid: mensajeroId,
         asignadoNombre: m?.nombre || mensajeroId,
+        asignadoAt: serverTimestamp(),
       });
       alert("Orden asignada ✅");
     } catch (e) {

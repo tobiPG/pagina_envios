@@ -1,6 +1,6 @@
 // src/routes/App.jsx
 import { BrowserRouter as Router, Routes, Route, useLocation, Navigate } from "react-router-dom";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState } from "react";
 
 import Menu from "../components/Menu";
 
@@ -16,76 +16,43 @@ import Entregas from "../pantallas/Entregas";
 import EstadisticasAdmin from "../pantallas/EstadisticasAdmin";
 import EstadisticasOperador from "../pantallas/EstadisticasOperador";
 import MapaMensajeros from "../pantallas/MapaMensajeros";
+
+// 👉 Nueva herramienta temporal para normalizar fechas
 import AdminToolsNormalizarFechas from "../pantallas/AdminToolsNormalizarFechas";
-
-// Normaliza y mapea alias de roles a uno de: "administrador" | "operador" | "mensajero"
-function normalizeRole(raw) {
-  const r = String(raw || "").trim().toLowerCase();
-  const map = {
-    "admin": "administrador",
-    "administrador": "administrador",
-    "administrator": "administrador",
-
-    "operador": "operador",
-    "operator": "operador",
-
-    "mensajero": "mensajero",
-    "rider": "mensajero",
-    "courier": "mensajero",
-    "delivery": "mensajero",
-    "deliveryman": "mensajero",
-    "repartidor": "mensajero",
-  };
-  return map[r] || r; // si no está mapeado, devuelve lo normalizado (para diagnóstico)
-}
 
 function Rutas() {
   const location = useLocation();
 
-  // Lee usuarioActivo una vez
+  // ✅ Leemos usuarioActivo una vez al montar (sincrónico)
   const [usuario, setUsuario] = useState(() => {
-    try {
-      const raw = localStorage.getItem("usuarioActivo");
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
+    const raw = localStorage.getItem("usuarioActivo");
+    return raw ? JSON.parse(raw) : null;
   });
 
-  // Sincroniza si cambia en otra pestaña
+  // (opcional) si cambia en otra pestaña/ventana, nos actualizamos
   useEffect(() => {
     const onStorage = (e) => {
       if (e.key === "usuarioActivo") {
-        try {
-          const raw = localStorage.getItem("usuarioActivo");
-          setUsuario(raw ? JSON.parse(raw) : null);
-        } catch {
-          setUsuario(null);
-        }
+        const raw = localStorage.getItem("usuarioActivo");
+        setUsuario(raw ? JSON.parse(raw) : null);
       }
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
 
-  // Rol normalizado y memoizado
-  const rol = useMemo(() => normalizeRole(usuario?.rol), [usuario?.rol]);
-
-  const mostrarMenu = location.pathname !== "/" && !!usuario;
+  const mostrarMenu = location.pathname !== "/" && usuario;
 
   return (
     <>
       {mostrarMenu && <Menu />}
 
       <Routes>
-        {/* LOGIN SIEMPRE DISPONIBLE */}
+        {/* LOGIN */}
         <Route path="/" element={<Login />} />
 
-        {/* PROTECCIÓN GLOBAL: si no hay usuario, redirige a login */}
-        {!usuario && <Route path="*" element={<Navigate to="/" replace />} />}
-
         {/* ADMINISTRADOR */}
-        {usuario && rol === "administrador" && (
+        {usuario?.rol === "administrador" && (
           <>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/estadisticas" element={<EstadisticasAdmin />} />
@@ -98,14 +65,16 @@ function Rutas() {
             <Route path="/ruta" element={<RutaOptimizada />} />
             <Route path="/mapa-mensajeros" element={<MapaMensajeros />} />
             <Route path="/mapa/:id" element={<MapaMensajeros />} />
-            {/* Herramienta temporal admin */}
+
+            {/* 🛠️ Ruta temporal solo para ADMIN: normalizar createdAt en 'ordenes' */}
             <Route path="/admin-tools-fechas" element={<AdminToolsNormalizarFechas />} />
+
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </>
         )}
 
         {/* OPERADOR */}
-        {usuario && rol === "operador" && (
+        {usuario?.rol === "operador" && (
           <>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/ordenes" element={<OrdenesEntrega />} />
@@ -115,27 +84,15 @@ function Rutas() {
         )}
 
         {/* MENSAJERO */}
-        {usuario && rol === "mensajero" && (
+        {usuario?.rol === "mensajero" && (
           <>
             <Route path="/entregas" element={<Entregas />} />
             <Route path="*" element={<Navigate to="/entregas" replace />} />
           </>
         )}
 
-        {/* USUARIO CON ROL NO RECONOCIDO */}
-        {usuario &&
-          !["administrador", "operador", "mensajero"].includes(rol) && (
-            <Route
-              path="*"
-              element={
-                <div style={{ padding: 20 }}>
-                  Rol no reconocido: <b>{String(usuario?.rol)}</b>
-                  <br />
-                  (Normalizado: <code>{String(rol)}</code>). Corrige el rol en el perfil o en el guardado de sesión.
-                </div>
-              }
-            />
-          )}
+        {/* Si no hay usuario o rol no coincide, redirige al login */}
+        {!usuario && <Route path="*" element={<Navigate to="/" replace />} />}
       </Routes>
     </>
   );

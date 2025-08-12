@@ -31,16 +31,12 @@ export default function Entregas() {
 
   // Helper: normaliza coordenadas independientemente del shape que venga en Firestore
   const getCoords = (o) => {
-    const latRaw =
-      o?.destinoLat ?? o?.address?.lat ?? o?.destino?.lat ?? null;
-    const lngRaw =
-      o?.destinoLng ?? o?.address?.lng ?? o?.destino?.lng ?? null;
-
+    const latRaw = o?.destinoLat ?? o?.address?.lat ?? o?.destino?.lat ?? null;
+    const lngRaw = o?.destinoLng ?? o?.address?.lng ?? o?.destino?.lng ?? null;
     const lat =
       typeof latRaw === "number" ? latRaw : latRaw != null ? Number(latRaw) : null;
     const lng =
       typeof lngRaw === "number" ? lngRaw : lngRaw != null ? Number(lngRaw) : null;
-
     return { lat: Number.isFinite(lat) ? lat : null, lng: Number.isFinite(lng) ? lng : null };
   };
 
@@ -134,9 +130,7 @@ export default function Entregas() {
       });
 
       const { lat, lng } = getCoords(orden);
-
       if (lat != null && lng != null) {
-        // Navega a tu pantalla de mapa (ajusta la ruta si usas otra)
         navigate(`/mapa/${orden.id}`, {
           state: {
             ordenId: orden.id,
@@ -145,14 +139,13 @@ export default function Entregas() {
             direccion: orden.direccionTexto || orden.address?.formatted || "",
             cliente: orden.cliente || "",
             numeroFactura: orden.numeroFactura || "",
+            asignadoUid: orden.asignadoUid || null,
+            address: orden.address || null,
           },
-          replace: false,
         });
       } else {
-        // Si no hay coordenadas, manda a seleccionar/confirmar destino
         navigate(`/seleccionar-destino/${orden.id}`, {
           state: { ordenId: orden.id },
-          replace: false,
         });
       }
     } catch (e) {
@@ -200,7 +193,6 @@ export default function Entregas() {
           const estado = o.entregado ? "ENTREGADA" : o.recibida ? "RECIBIDA" : "PENDIENTE";
 
           const dir = o.direccionTexto || o.address?.formatted || "—";
-
           const { lat, lng } = getCoords(o);
           const coordsText =
             lat != null && lng != null ? `${lat.toFixed(6)}, ${lng.toFixed(6)}` : "—";
@@ -224,33 +216,54 @@ export default function Entregas() {
                 Fecha/Hora: {o.fecha || "—"} {o.hora || ""} — Monto:{" "}
                 {o.monto != null ? `$${o.monto}` : "—"}
               </div>
-              <div>Dirección: {dir} — Coords: {coordsText} {gmaps && (
-                <>
-                  {" — "}
-                  <a href={gmaps} target="_blank" rel="noopener noreferrer">
-                    Abrir en Google Maps
-                  </a>
-                </>
-              )}
+              <div>Dirección: {dir} — Coords: {coordsText}
+                {gmaps && (
+                  <>
+                    {" — "}
+                    <a href={gmaps} target="_blank" rel="noopener noreferrer">
+                      Abrir en Google Maps
+                    </a>
+                  </>
+                )}
               </div>
               <div>
                 Estado: <b>{estado}</b>
               </div>
 
-              {!o.entregado && (
-                <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {!o.recibida && (
-                    <button onClick={() => marcarComoRecibidaYNavegar(o)}>
-                      ✅ Marcar como Recibida
-                    </button>
-                  )}
-                  {o.recibida && (
-                    <button onClick={() => marcarComoEntregada(o.id, o.fechaRecibida)}>
-                      📬 Marcar como Entregada
-                    </button>
-                  )}
-                </div>
-              )}
+              {/* Acciones */}
+              <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {/* Ver en mapa: siempre visible para Admin/Operador/Mensajero */}
+                <button
+                  onClick={() =>
+                    navigate(`/mapa/${o.id}`, {
+                      state: {
+                        ordenId: o.id,
+                        lat,
+                        lng,
+                        direccion: o.direccionTexto || o.address?.formatted || "",
+                        cliente: o.cliente || "",
+                        numeroFactura: o.numeroFactura || "",
+                        asignadoUid: o.asignadoUid || null,
+                        address: o.address || null,
+                      },
+                    })
+                  }
+                >
+                  🗺️ Ver en mapa
+                </button>
+
+                {!o.entregado && !o.recibida && (
+                  <button onClick={() => marcarComoRecibidaYNavegar(o)}>
+                    ✅ Marcar como Recibida
+                  </button>
+                )}
+
+                {!o.entregado && o.recibida && (
+                  <button onClick={() => marcarComoEntregada(o.id, o.fechaRecibida)}>
+                    📬 Marcar como Entregada
+                  </button>
+                )}
+              </div>
             </li>
           );
         })}
