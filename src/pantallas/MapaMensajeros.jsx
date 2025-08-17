@@ -9,13 +9,19 @@ import {
   orderBy,
   doc,
   getDoc,
+  where,
 } from "firebase/firestore";
 
 import { MapContainer, TileLayer, Marker, Popup, Tooltip, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
+import { ensureUsuarioActivo } from "../utils/ensureUsuario"; // 👈 IMPORTANTE
 
-// Íconos (mensajero conserva tu imagen)
+// ===== Config =====
+const COLEC_UBI = "ubicacionesMensajeros";
+const COLEC_ORD = "ordenes"; // 👈 usar la colección que permiten tus reglas
+
+// Ícono del mensajero
 const iconMensajero = new L.Icon({
   iconUrl: "https://cdn-icons-png.flaticon.com/512/684/684908.png",
   iconSize: [36, 36],
@@ -23,7 +29,7 @@ const iconMensajero = new L.Icon({
   popupAnchor: [0, -30],
 });
 
-// ====== NUEVO: iconos de destino por estado (circulitos de color) ======
+// ====== Íconos de destino por estado ======
 const mkDestino = (color) =>
   L.divIcon({
     className: "destino-dot",
@@ -45,9 +51,8 @@ function iconPorEstado(o) {
   if (o?.recibida)  return ICON_RECIBIDA;
   return ICON_PENDIENTE;
 }
-// ======================================================================
 
-// Util: hoy en formato YYYY-MM-DD (zona local)
+// Util: hoy en formato YYYY-MM-DD
 function hoyYYYYMMDD() {
   const d = new Date();
   const y = d.getFullYear();
@@ -56,7 +61,7 @@ function hoyYYYYMMDD() {
   return `${y}-${m}-${day}`;
 }
 
-// Util: abrir Google Maps con coords exactas
+// Util: abrir Google Maps
 function abrirRutaGoogle(destLat, destLng, useOrigin = true) {
   const destino = `${Number(destLat)},${Number(destLng)}`;
   const abrir = (origin) => {
@@ -77,7 +82,6 @@ function abrirRutaGoogle(destLat, destLng, useOrigin = true) {
   }
 }
 
-// Ajustar mapa a bounds
 function FitBoundsBtn({ bounds }) {
   const map = useMap();
   return (
@@ -104,7 +108,28 @@ function FitBoundsBtn({ bounds }) {
   );
 }
 
-// (Opcional) Leyenda de colores
+function BadgeEstado({ estado }) {
+  const e = (estado || "").toLowerCase();
+  const color = e === "en_ruta" ? "#0a7" : e === "disponible" ? "#09f" : e === "listo_para_ruta" ? "#6a5acd" : "#999";
+  const label =
+    e === "en_ruta" ? "En ruta" :
+    e === "disponible" ? "Disponible" :
+    e === "listo_para_ruta" ? "Listo para ruta" :
+    "Inactivo";
+  return (
+    <span style={{
+      display: "inline-block",
+      padding: "2px 8px",
+      borderRadius: 12,
+      background: color,
+      color: "#fff",
+      fontSize: 12
+    }}>
+      {label}
+    </span>
+  );
+}
+
 function Legend() {
   const item = (color, label) => (
     <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
@@ -121,9 +146,9 @@ function Legend() {
       background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:"6px 10px",
       fontSize:12, color:"#333"
     }}>
-      <div style={{fontWeight:600, marginBottom:4}}>Estados</div>
-      
-      {item("#fb8e00ff","Pendiente")}
+      <div style={{fontWeight:600, marginBottom:4}}>Estados del destino</div>
+      {item("#e53935","Pendiente")}
+      {item("#fb8c00","Recibida")}
       {item("#43a047","Entregada")}
     </div>
   );
@@ -133,23 +158,24 @@ function Legend() {
 function getCoords(o) {
   const latRaw = o?.address?.lat ?? o?.destino?.lat ?? o?.destinoLat ?? null;
   const lngRaw = o?.address?.lng ?? o?.destino?.lng ?? o?.destinoLng ?? null;
-  const lat =
-    typeof latRaw === "number" ? latRaw : latRaw != null ? Number(latRaw) : null;
-  const lng =
-    typeof lngRaw === "number" ? lngRaw : lngRaw != null ? Number(lngRaw) : null;
-  return {
-    lat: Number.isFinite(lat) ? lat : null,
-    lng: Number.isFinite(lng) ? lng : null,
-  };
+  const latNum = typeof latRaw === "number" ? latRaw : (latRaw != null ? Number(latRaw) : NaN);
+  const lngNum = typeof lngRaw === "number" ? lngRaw : (lngRaw != null ? Number(lngRaw) : NaN);
+  const lat = Number.isFinite(latNum) ? latNum : null;
+  const lng = Number.isFinite(lngNum) ? lngNum : null;
+  return { lat, lng };
 }
 
 export default function MapaMensajeros() {
-  // Navegación / ruta / state
   const navigate = useNavigate();
   const { id } = useParams(); // /mapa/:id  → id de orden
   const { state } = useLocation() || {};
 
-  // Modo enfocado si vienen coords por state o si hay :id en la URL
+  // Usuario y empresa
+  const usuario = useMemo(() => {
+    try { return JSON.parse(localStorage.getItem("usuarioActivo") || "null"); } catch { return null; }
+  }, []);
+  const empresaId = usuario?.empresaId != null ? String(usuario.empresaId) : null;
+
   const stateLat =
     typeof state?.lat === "number" ? state.lat : state?.lat != null ? Number(state.lat) : null;
   const stateLng =
@@ -158,11 +184,10 @@ export default function MapaMensajeros() {
   const focusOrderId = id || state?.ordenId || null;
   const isFocusMode = !!(hasStateCoords || focusOrderId);
 
-  // Datos
   const [mensajeros, setMensajeros] = useState([]);
   const [ordenesAll, setOrdenesAll] = useState([]);
+  const [errMsg, setErrMsg] = useState("");
 
-  // Para focus mode, guardamos la orden enfocada (si hay que cargarla)
   const [focusOrder, setFocusOrder] = useState(
     hasStateCoords
       ? {
@@ -177,55 +202,115 @@ export default function MapaMensajeros() {
   const [loadingFocus, setLoadingFocus] = useState(false);
   const [errorFocus, setErrorFocus] = useState("");
 
-  // Filtros UI (solo para vista general)
   const [soloHoy, setSoloHoy] = useState(true);
   const [soloPendientes, setSoloPendientes] = useState(true);
 
   const centro = useMemo(() => [18.4861, -69.9312], []);
   const fechaHoy = hoyYYYYMMDD();
 
-  // Realtime: ubicacionesMensajeros (siempre; útiles en focus también)
+  // ===== Asegurar sesión antes de leer Firestore =====
   useEffect(() => {
-    const ref = collection(db, "ubicacionesMensajeros");
-    const q = query(ref, orderBy("timestamp", "desc"));
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const arr = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        setMensajeros(arr);
-      },
-      (err) => console.error("onSnapshot ubicacionesMensajeros:", err)
-    );
-    return () => unsub();
+    (async () => {
+      const ok = await ensureUsuarioActivo(); // 👈 importante
+      if (!ok) {
+        setErrMsg("No hay sesión de Firebase. Inicia sesión nuevamente.");
+      }
+    })();
   }, []);
 
-  // Realtime: ordenes (solo si estamos en vista general; en focus no hace falta todo)
+  // Realtime: ubicacionesMensajeros
+  useEffect(() => {
+    let unsub = null;
+    (async () => {
+      const ok = await ensureUsuarioActivo(); // 👈 garantiza request.auth
+      if (!ok) { setErrMsg("No autenticado."); return; }
+      if (!empresaId) { setErrMsg("Falta empresaId."); return; }
+
+      const ref = collection(db, COLEC_UBI);
+      const qU = query(ref, where("empresaId", "==", empresaId));
+      unsub = onSnapshot(
+        qU,
+        (snap) => {
+          const arr = snap.docs.map((d) => {
+            const x = d.data() || {};
+            return {
+              id: d.id,
+              nombre: x.nombre || d.id,
+              estado: (x.estado || "disponible").toLowerCase(),
+              lat: x.lat,
+              lng: x.lng,
+              lastPingAt: x.lastPingAt?.toDate ? x.lastPingAt.toDate() : null,
+            };
+          });
+          setMensajeros(arr);
+          setErrMsg("");
+        },
+        (err) => {
+          console.error("onSnapshot ubicacionesMensajeros:", err);
+          if (err?.code === "permission-denied") {
+            setErrMsg("Permiso denegado al leer ubicaciones. Verifica reglas y que los docs tengan empresaId.");
+          } else {
+            setErrMsg(err?.message || "No pude leer ubicaciones.");
+          }
+        }
+      );
+    })();
+    return () => { if (unsub) unsub(); };
+  }, [empresaId]);
+
+  // Realtime: ordenes (vista general)
   useEffect(() => {
     if (isFocusMode) return;
-    const ref = collection(db, "ordenes");
-    const unsub = onSnapshot(
-      ref,
-      (snap) => {
-        const arr = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        setOrdenesAll(arr);
-      },
-      (err) => console.error("onSnapshot ordenes:", err)
-    );
-    return () => unsub();
-  }, [isFocusMode]);
+    let unsub = null, unsubFallback = null;
+    (async () => {
+      const ok = await ensureUsuarioActivo();
+      if (!ok) { setErrMsg("No autenticado."); return; }
+      if (!empresaId) { setErrMsg("Falta empresaId."); return; }
 
-  // Focus: si no llegaron coords por state pero tenemos :id, cargamos la orden puntual
+      const ref = collection(db, COLEC_ORD);
+      unsub = onSnapshot(
+        query(ref, where("empresaId", "==", empresaId), orderBy("createdAt", "desc")),
+        (snap) => {
+          const arr = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          setOrdenesAll(arr);
+          setErrMsg("");
+        },
+        (err) => {
+          console.error("onSnapshot ordenes:", err);
+          if (err?.code === "failed-precondition") {
+            // Fallback sin orderBy si falta índice
+            unsubFallback = onSnapshot(
+              query(ref, where("empresaId", "==", empresaId)),
+              (snap2) => {
+                const arr2 = snap2.docs.map((d) => ({ id: d.id, ...d.data() }));
+                arr2.sort((a, b) => (b?.createdAt?.toMillis?.() ?? 0) - (a?.createdAt?.toMillis?.() ?? 0));
+                setOrdenesAll(arr2);
+                setErrMsg("Falta índice (empresaId + createdAt). Usando fallback temporal.");
+              },
+              (e2) => setErrMsg(e2?.message || "No pude leer órdenes (fallback).")
+            );
+          } else if (err?.code === "permission-denied") {
+            setErrMsg("Permiso denegado al leer órdenes. Verifica reglas y empresaId en cada doc.");
+          } else {
+            setErrMsg(err?.message || "No pude leer órdenes.");
+          }
+        }
+      );
+    })();
+    return () => { if (unsub) unsub(); if (unsubFallback) unsubFallback(); };
+  }, [isFocusMode, empresaId]);
+
+  // Focus: cargar la orden puntual (desde 'ordenes', no 'ordenesEntrega')
   useEffect(() => {
     let mounted = true;
-    async function loadFocusOrder() {
-      if (!isFocusMode) return;
-      if (hasStateCoords) return; // ya tenemos coords
-      if (!focusOrderId) return;
-
+    (async () => {
+      if (!isFocusMode || hasStateCoords || !focusOrderId) return;
+      const ok = await ensureUsuarioActivo();
+      if (!ok) { setErrorFocus("No autenticado."); return; }
       setLoadingFocus(true);
       setErrorFocus("");
       try {
-        const ref = doc(db, "ordenes", focusOrderId);
+        const ref = doc(db, COLEC_ORD, focusOrderId); // 👈 colección correcta
         const snap = await getDoc(ref);
         if (!mounted) return;
 
@@ -242,63 +327,53 @@ export default function MapaMensajeros() {
       } finally {
         setLoadingFocus(false);
       }
-    }
-    loadFocusOrder();
-    return () => {
-      mounted = false;
-    };
+    })();
+    return () => { mounted = false; };
   }, [isFocusMode, hasStateCoords, focusOrderId]);
 
-  // Ordenes filtradas (solo vista general)
   const ordenes = useMemo(() => {
     if (isFocusMode) return [];
+    const hoy = hoyYYYYMMDD();
     return ordenesAll.filter((o) => {
       if (soloPendientes && o.entregado) return false;
-      if (soloHoy && o.fecha !== fechaHoy) return false;
+      if (soloHoy && o.fecha !== hoy) return false;
       const { lat, lng } = getCoords(o);
-      if (lat == null || lng == null) return false;
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
       return true;
     });
-  }, [isFocusMode, ordenesAll, soloPendientes, soloHoy, fechaHoy]);
+  }, [isFocusMode, ordenesAll, soloPendientes, soloHoy]);
 
-  // Bounds (vista general = todos; focus = solo la orden + opcional riders)
   const bounds = useMemo(() => {
     const pts = [];
     if (isFocusMode) {
       const o = focusOrder;
       if (o) {
         const { lat, lng } = getCoords(o);
-        if (lat != null && lng != null) pts.push([lat, lng]);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) pts.push([lat, lng]);
       } else if (hasStateCoords) {
-        pts.push([stateLat, stateLng]);
+        if (Number.isFinite(stateLat) && Number.isFinite(stateLng)) pts.push([stateLat, stateLng]);
       }
-      // También agregamos mensajeros para que el “Ajustar vista” compare ambos
       mensajeros.forEach((m) => {
-        if (m.lat != null && m.lng != null) pts.push([Number(m.lat), Number(m.lng)]);
+        const latN = Number(m.lat), lngN = Number(m.lng);
+        if (Number.isFinite(latN) && Number.isFinite(lngN)) pts.push([latN, lngN]);
       });
       return pts;
     }
-    // Vista general
     mensajeros.forEach((m) => {
-      if (m.lat != null && m.lng != null) pts.push([Number(m.lat), Number(m.lng)]);
+      const latN = Number(m.lat), lngN = Number(m.lng);
+      if (Number.isFinite(latN) && Number.isFinite(lngN)) pts.push([latN, lngN]);
     });
     ordenes.forEach((o) => {
       const { lat, lng } = getCoords(o);
-      if (lat != null && lng != null) pts.push([lat, lng]);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) pts.push([lat, lng]);
     });
     return pts;
   }, [isFocusMode, focusOrder, hasStateCoords, stateLat, stateLng, mensajeros, ordenes]);
 
-  // Última ubicación local del mensajero (solo info)
   const lastLoc = useMemo(() => {
-    try {
-      return JSON.parse(localStorage.getItem("ubicacionMensajero") || "null");
-    } catch {
-      return null;
-    }
+    try { return JSON.parse(localStorage.getItem("ubicacionMensajero") || "null"); } catch { return null; }
   }, []);
 
-  // Datos de la orden enfocada
   const focusCoords = useMemo(() => {
     if (hasStateCoords) return { lat: stateLat, lng: stateLng };
     if (focusOrder) return getCoords(focusOrder);
@@ -337,7 +412,6 @@ export default function MapaMensajeros() {
         </div>
       </div>
 
-      {/* Filtros (solo vista general) */}
       {!isFocusMode && (
         <div
           style={{
@@ -365,7 +439,7 @@ export default function MapaMensajeros() {
           <div style={{ marginLeft: "auto", fontSize: 12, color: "#555" }}>
             <span style={{ marginRight: 10 }}>📍 Mensajero</span>
             <span>📦 Destino</span>
-            {lastLoc && (
+            {lastLoc && Number.isFinite(Number(lastLoc.lat)) && Number.isFinite(Number(lastLoc.lng)) && (
               <div style={{ marginTop: 2 }}>
                 Mi última ubicación: {Number(lastLoc.lat).toFixed(5)}, {Number(lastLoc.lng).toFixed(5)}
               </div>
@@ -374,7 +448,8 @@ export default function MapaMensajeros() {
         </div>
       )}
 
-      {/* Info orden enfocada */}
+      {errMsg && <div style={{ color: "#b00", marginBottom: 8 }}>{errMsg}</div>}
+
       {isFocusMode && (
         <div style={{ padding: "8px 0", fontSize: 14, color: "#333" }}>
           {loadingFocus && <div>Cargando orden…</div>}
@@ -404,7 +479,6 @@ export default function MapaMensajeros() {
         </div>
       )}
 
-      {/* Mapa */}
       <div style={{ height: 560, position: "relative" }}>
         <Legend />
         <MapContainer center={centro} zoom={isFocusMode ? 15 : 12} style={{ height: "100%", width: "100%" }}>
@@ -413,35 +487,38 @@ export default function MapaMensajeros() {
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
 
-          {/* Mensajeros (en ambos modos) */}
+          {/* Mensajeros */}
           {mensajeros.map((m) => {
-            if (m.lat == null || m.lng == null) return null;
-            const pos = [Number(m.lat), Number(m.lng)];
-            const fecha = m.timestamp
-              ? new Date(m.timestamp).toLocaleString()
-              : m.ultimaActualizacion || m.ultima_actualizacion || "";
+            const latN = Number(m.lat);
+            const lngN = Number(m.lng);
+            if (!Number.isFinite(latN) || !Number.isFinite(lngN)) return null;
+            const pos = [latN, lngN];
+            const fecha = m.lastPingAt ? m.lastPingAt.toLocaleString() : "";
             return (
               <Marker key={`rider-${m.id}`} position={pos} icon={iconMensajero}>
-                {/* Nombre del mensajero visible siempre */}
                 <Tooltip permanent direction="top" offset={[0, -18]}>
-                  {m.nombre || m.id}
+                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <b>{m.nombre || m.id}</b> <BadgeEstado estado={m.estado} />
+                  </div>
                 </Tooltip>
                 <Popup>
                   <div style={{ fontSize: 14 }}>
-                    <b>Mensajero:</b> {m.nombre || m.id}<br />
-                    <b>Lat/Lng:</b> {pos[0].toFixed(5)}, {pos[1].toFixed(5)}<br />
-                    <b>Última actualización:</b> {fecha || "—"}
+                    <div style={{ marginBottom: 4 }}>
+                      <b>Mensajero:</b> {m.nombre || m.id} &nbsp; <BadgeEstado estado={m.estado} />
+                    </div>
+                    <div><b>Lat/Lng:</b> {pos[0].toFixed(5)}, {pos[1].toFixed(5)}</div>
+                    <div><b>Último ping:</b> {fecha || "—"}</div>
                   </div>
                 </Popup>
               </Marker>
             );
           })}
 
-          {/* Vista general: todos los destinos (con color por estado) */}
+          {/* Vista general: destinos */}
           {!isFocusMode &&
             ordenes.map((o) => {
               const { lat, lng } = getCoords(o);
-              if (lat == null || lng == null) return null;
+              if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
               const estado = o.entregado ? "ENTREGADA" : o.recibida ? "RECIBIDA" : "PENDIENTE";
               return (
                 <Marker key={`ord-${o.id}`} position={[lat, lng]} icon={iconPorEstado(o)}>
@@ -469,18 +546,18 @@ export default function MapaMensajeros() {
               );
             })}
 
-          {/* Vista enfocada: solo la orden actual (con color por estado) */}
+          {/* Vista enfocada: solo la orden actual */}
           {isFocusMode && puedeMostrarFocus && (
             <Marker position={[focusCoords.lat, focusCoords.lng]} icon={iconPorEstado(focusOrder)}>
               <Popup>
                 <div style={{ fontSize: 14, minWidth: 220 }}>
-                  {focusCliente && <div><b>Cliente:</b> {focusCliente}</div>}
-                  {focusFactura && <div><b>Factura:</b> {focusFactura}</div>}
-                  {focusDireccion && (
+                  {state?.cliente || focusOrder?.cliente ? <div><b>Cliente:</b> {state?.cliente || focusOrder?.cliente}</div> : null}
+                  {state?.numeroFactura || focusOrder?.numeroFactura ? <div><b>Factura:</b> {state?.numeroFactura || focusOrder?.numeroFactura}</div> : null}
+                  {state?.direccion || state?.address?.formatted || focusOrder?.direccionTexto || focusOrder?.address?.formatted ? (
                     <div style={{ marginTop: 6, fontSize: 12, color: "#555" }}>
-                      {focusDireccion}
+                      {state?.direccion || state?.address?.formatted || focusOrder?.direccionTexto || focusOrder?.address?.formatted}
                     </div>
-                  )}
+                  ) : null}
                   <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
                     <button
                       onClick={() => abrirRutaGoogle(focusCoords.lat, focusCoords.lng, true)}
@@ -500,7 +577,6 @@ export default function MapaMensajeros() {
             </Marker>
           )}
 
-          {/* Control de FitBounds */}
           <AutoFitBounds bounds={bounds} />
           <FitBoundsBtn bounds={bounds} />
         </MapContainer>
@@ -509,7 +585,6 @@ export default function MapaMensajeros() {
   );
 }
 
-// Auto fit al montar y cuando cambian bounds (incluye escuchar un evento manual)
 function AutoFitBounds({ bounds }) {
   const map = useMap();
   useEffect(() => {

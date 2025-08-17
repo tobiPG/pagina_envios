@@ -1,24 +1,36 @@
-// firebaseConfig.js
+// src/firebaseConfig.js
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
-import { getAnalytics } from "firebase/analytics";
+import { getAuth, setPersistence, browserLocalPersistence } from "firebase/auth";
 
-const firebaseConfig = {
-  apiKey: "AIzaSyDv4uaabwiRjMwO8nx5qqGoa2UgqWk0k2s",
-  authDomain: "envios-realtime.firebaseapp.com",
-  projectId: "envios-realtime",
-  storageBucket: "envios-realtime.firebasestorage.app",
-  messagingSenderId: "18006271860",
-  appId: "1:18006271860:web:c404936210a95f2c436e21",
-  measurementId: "G-9K0DM6MGQP"
+const tidy = v => (typeof v === "string" ? v.trim() : v);
+
+const cfg = {
+  apiKey: tidy(import.meta.env.VITE_FIREBASE_API_KEY),
+  authDomain: tidy(import.meta.env.VITE_FIREBASE_AUTH_DOMAIN),
+  projectId: tidy(import.meta.env.VITE_FIREBASE_PROJECT_ID),
+  storageBucket: tidy(import.meta.env.VITE_FIREBASE_STORAGE_BUCKET),
+  messagingSenderId: tidy(import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID),
+  appId: tidy(import.meta.env.VITE_FIREBASE_APP_ID),
 };
 
-// Inicializa Firebase
-const app = initializeApp(firebaseConfig);
-const analytics = getAnalytics(app);
+// Logs de verificación (seguros)
+console.log("[Firebase cfg] PID:", cfg.projectId || "(vacío)");
+console.log("[Firebase cfg] API:", cfg.apiKey ? cfg.apiKey.slice(0, 8) + "..." : "(vacía)");
 
-// Inicializa Firestore
-const db = getFirestore(app);
+// Validación dura
+const missing = Object.entries(cfg).filter(([, v]) => !v).map(([k]) => k);
+if (missing.length) {
+  throw new Error(
+    `Faltan variables Firebase en .env.local: ${missing.join(", ")}.
+     Verifica prefijo VITE_ y reinicia Vite (Ctrl+C, npm run dev).`
+  );
+}
+if (!cfg.apiKey.startsWith("AIza")) {
+  throw new Error("apiKey no parece válida (debe iniciar con 'AIza'). Revisa .env.local.");
+}
 
-// Exporta para que otros archivos puedan usarlo
-export { app, db };
+const app = initializeApp(cfg);
+export const db = getFirestore(app);
+export const auth = getAuth(app);
+setPersistence(auth, browserLocalPersistence).catch(() => {});

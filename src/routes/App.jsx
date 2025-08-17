@@ -1,6 +1,6 @@
 // src/routes/App.jsx
 import { BrowserRouter as Router, Routes, Route, useLocation, Navigate } from "react-router-dom";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, Suspense, lazy } from "react";
 
 import Menu from "../components/Menu";
 
@@ -17,32 +17,41 @@ import EstadisticasAdmin from "../pantallas/EstadisticasAdmin";
 import EstadisticasOperador from "../pantallas/EstadisticasOperador";
 import MapaMensajeros from "../pantallas/MapaMensajeros";
 import AdminToolsNormalizarFechas from "../pantallas/AdminToolsNormalizarFechas";
+import RutaMensajero from "../pantallas/RutaMensajero";
 
-// Normaliza y mapea alias de roles a uno de: "administrador" | "operador" | "mensajero"
+// 👇 Onboarding multiempresa (públicas + admin)
+// ⚠️ IMPORTS con ruta y extensión exacta (.jsx) y mayúsculas correctas
+import EmpresaRegistro from "../pantallas/Auth/EmpresaRegistro.jsx";
+const PlanSeleccion = lazy(() => import("../pantallas/Auth/PlanSeleccion.jsx"));
+import UsuariosEmpresa from "../pantallas/Admin/UsuariosEmpresa.jsx";
+import AceptarInvitacion from "../pantallas/Auth/AceptarInvitacion.jsx";
+import ReclamarToken from "../pantallas/Auth/ReclamarToken.jsx";
+
+// Normaliza alias de roles
 function normalizeRole(raw) {
   const r = String(raw || "").trim().toLowerCase();
   const map = {
-    "admin": "administrador",
-    "administrador": "administrador",
-    "administrator": "administrador",
+    admin: "administrador",
+    administrador: "administrador",
+    administrator: "administrador",
 
-    "operador": "operador",
-    "operator": "operador",
+    operador: "operador",
+    operator: "operador",
 
-    "mensajero": "mensajero",
-    "rider": "mensajero",
-    "courier": "mensajero",
-    "delivery": "mensajero",
-    "deliveryman": "mensajero",
-    "repartidor": "mensajero",
+    mensajero: "mensajero",
+    rider: "mensajero",
+    courier: "mensajero",
+    delivery: "mensajero",
+    deliveryman: "mensajero",
+    repartidor: "mensajero",
   };
-  return map[r] || r; // si no está mapeado, devuelve lo normalizado (para diagnóstico)
+  return map[r] || r;
 }
 
 function Rutas() {
   const location = useLocation();
 
-  // Lee usuarioActivo una vez
+  // Sesión
   const [usuario, setUsuario] = useState(() => {
     try {
       const raw = localStorage.getItem("usuarioActivo");
@@ -52,7 +61,7 @@ function Rutas() {
     }
   });
 
-  // Sincroniza si cambia en otra pestaña
+  // Sync entre pestañas
   useEffect(() => {
     const onStorage = (e) => {
       if (e.key === "usuarioActivo") {
@@ -68,23 +77,34 @@ function Rutas() {
     return () => window.removeEventListener("storage", onStorage);
   }, []);
 
-  // Rol normalizado y memoizado
   const rol = useMemo(() => normalizeRole(usuario?.rol), [usuario?.rol]);
 
-  const mostrarMenu = location.pathname !== "/" && !!usuario;
+  // Menú: oculto en rutas públicas (login / crear-empresa / aceptar-invitacion / reclamar-token)
+  const pathname = location.pathname || "/";
+  const esPublica =
+    pathname === "/" ||
+    pathname === "/crear-empresa" ||
+    pathname === "/reclamar-token" ||
+    pathname.startsWith("/aceptar-invitacion");
+  const mostrarMenu = !!usuario && !esPublica;
 
   return (
     <>
       {mostrarMenu && <Menu />}
 
       <Routes>
-        {/* LOGIN SIEMPRE DISPONIBLE */}
+        {/* Login siempre */}
         <Route path="/" element={<Login />} />
 
-        {/* PROTECCIÓN GLOBAL: si no hay usuario, redirige a login */}
+        {/* 🔓 Rutas públicas (sin sesión) */}
+        <Route path="/crear-empresa" element={<EmpresaRegistro />} />
+        <Route path="/aceptar-invitacion/:token" element={<AceptarInvitacion />} />
+        <Route path="/reclamar-token" element={<ReclamarToken />} /> {/* 👈 NUEVA */}
+
+        {/* Si no hay sesión y no coincidió con públicas → login */}
         {!usuario && <Route path="*" element={<Navigate to="/" replace />} />}
 
-        {/* ADMINISTRADOR */}
+        {/* ADMIN */}
         {usuario && rol === "administrador" && (
           <>
             <Route path="/dashboard" element={<Dashboard />} />
@@ -98,8 +118,12 @@ function Rutas() {
             <Route path="/ruta" element={<RutaOptimizada />} />
             <Route path="/mapa-mensajeros" element={<MapaMensajeros />} />
             <Route path="/mapa/:id" element={<MapaMensajeros />} />
-            {/* Herramienta temporal admin */}
+            <Route path="/ruta-mensajero/:id" element={<RutaMensajero />} />
+            {/* Herramienta temporal */}
             <Route path="/admin-tools-fechas" element={<AdminToolsNormalizarFechas />} />
+            {/* Multiempresa */}
+            <Route path="/plan" element={<PlanSeleccion />} />
+            <Route path="/usuarios-empresa" element={<UsuariosEmpresa />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </>
         )}
@@ -110,6 +134,7 @@ function Rutas() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/ordenes" element={<OrdenesEntrega />} />
             <Route path="/mapa/:id" element={<MapaMensajeros />} />
+            <Route path="/ruta-mensajero/:id" element={<RutaMensajero />} />
             <Route path="*" element={<Navigate to="/ordenes" replace />} />
           </>
         )}
@@ -118,24 +143,24 @@ function Rutas() {
         {usuario && rol === "mensajero" && (
           <>
             <Route path="/entregas" element={<Entregas />} />
+            <Route path="/ruta-mensajero/:id" element={<RutaMensajero />} />
             <Route path="*" element={<Navigate to="/entregas" replace />} />
           </>
         )}
 
-        {/* USUARIO CON ROL NO RECONOCIDO */}
-        {usuario &&
-          !["administrador", "operador", "mensajero"].includes(rol) && (
-            <Route
-              path="*"
-              element={
-                <div style={{ padding: 20 }}>
-                  Rol no reconocido: <b>{String(usuario?.rol)}</b>
-                  <br />
-                  (Normalizado: <code>{String(rol)}</code>). Corrige el rol en el perfil o en el guardado de sesión.
-                </div>
-              }
-            />
-          )}
+        {/* Rol no reconocido */}
+        {usuario && !["administrador", "operador", "mensajero"].includes(rol) && (
+          <Route
+            path="*"
+            element={
+              <div style={{ padding: 20 }}>
+                Rol no reconocido: <b>{String(usuario?.rol)}</b>
+                <br />
+                (Normalizado: <code>{String(rol)}</code>). Corrige el rol en el perfil o en el guardado de sesión.
+              </div>
+            }
+          />
+        )}
       </Routes>
     </>
   );
@@ -144,7 +169,9 @@ function Rutas() {
 export default function App() {
   return (
     <Router>
-      <Rutas />
+      <Suspense fallback={<div style={{ padding: 20 }}>Cargando…</div>}>
+        <Rutas />
+      </Suspense>
     </Router>
   );
 }

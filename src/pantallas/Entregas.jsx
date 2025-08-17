@@ -1,5 +1,5 @@
 // src/pantallas/Entregas.jsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { db } from "../firebaseConfig";
 import {
@@ -10,7 +10,8 @@ import {
   serverTimestamp,
   where,
   query,
-  orderBy,
+  setDoc,
+  getDoc,
 } from "firebase/firestore";
 
 export default function Entregas() {
@@ -27,51 +28,114 @@ export default function Entregas() {
     }
   }, []);
 
-  const rol = usuario?.rol || null;
+  const rol = (usuario?.rol || "").toLowerCase();
+  const empresaId = usuario?.empresaId || null;
 
-  // Helper: normaliza coordenadas independientemente del shape que venga en Firestore
-  const getCoords = (o) => {
-    const latRaw = o?.destinoLat ?? o?.address?.lat ?? o?.destino?.lat ?? null;
-    const lngRaw = o?.destinoLng ?? o?.address?.lng ?? o?.destino?.lng ?? null;
-    const lat =
-      typeof latRaw === "number" ? latRaw : latRaw != null ? Number(latRaw) : null;
-    const lng =
-      typeof lngRaw === "number" ? lngRaw : lngRaw != null ? Number(lngRaw) : null;
-    return { lat: Number.isFinite(lat) ? lat : null, lng: Number.isFinite(lng) ? lng : null };
+  const mensajeroId =
+    usuario?.id ||
+    usuario?.uid ||
+    usuario?.userId ||
+    usuario?.usuarioId ||
+    usuario?.usuario ||
+    "mensajero-desconocido";
+  const mensajeroNombre = usuario?.nombre || usuario?.usuario || "Mensajero";
+
+  // Helpers coords seguras
+  const toNumOrNull = (v) => {
+    const n = typeof v === "number" ? v : v != null ? Number(v) : NaN;
+    return Number.isFinite(n) ? n : null;
   };
 
-  // Suscripción en tiempo real
-  useEffect(() => {
-    const ref = collection(db, "ordenes");
+  const getCoords = (o) => {
+    const lat =
+      toNumOrNull(o?.destinoLat) ??
+      toNumOrNull(o?.address?.lat) ??
+      toNumOrNull(o?.destino?.lat);
+    const lng =
+      toNumOrNull(o?.destinoLng) ??
+      toNumOrNull(o?.address?.lng) ??
+      toNumOrNull(o?.destino?.lng);
+    return { lat, lng };
+  };
 
+  // Toggle manual de estado
+  async function toggleEstadoMensajero() {
+    try {
+      const ref = doc(db, "ubicacionesMensajeros", mensajeroId);
+      const snap = await getDoc(ref);
+      const data = snap.exists() ? snap.data() : {};
+      const estadoActual = (data?.estado || "disponible").toLowerCase();
+      const siguiente = estadoActual === "disponible" ? "en_ruta" : "disponible";
+
+      await setDoc(
+        ref,
+        {
+          empresaId, // requerido por reglas
+          nombre: data?.nombre || mensajeroNombre,
+          estado: siguiente,
+          estadoUpdatedAt: serverTimestamp(),
+          lastPingAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      alert(`Estado actualizado: ${siguiente.toUpperCase()}`);
+    } catch (e) {
+      console.error("toggleEstadoMensajero:", e);
+      alert("No pude actualizar tu estado.");
+    }
+  }
+
+  // Suscripción de órdenes (filtrado por empresa)
+  useEffect(() => {
+    if (!empresaId) {
+      setOrdenes([]);
+      return;
+    }
+
+    const ref = collection(db, "ordenes");
     const uid =
       usuario?.id || usuario?.uid || usuario?.userId || usuario?.usuarioId || null;
     const nombre = usuario?.nombre || null;
 
-    // ADMIN: ve todo, ordenado por creación
+    // ADMIN: ve todas las órdenes de su empresa
     if (rol === "administrador") {
-      const qAdmin = query(ref, orderBy("createdAt", "desc"));
+      const qAdmin = query(ref, where("empresaId", "==", empresaId));
       const unsub = onSnapshot(
         qAdmin,
-        (snap) => setOrdenes(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+        (snap) => {
+          const arr = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          // ordeno en cliente por createdAt desc si existe
+          arr.sort((a, b) => {
+            const ta = a.createdAt?.toMillis?.() || 0;
+            const tb = b.createdAt?.toMillis?.() || 0;
+            return tb - ta;
+          });
+          setOrdenes(arr);
+        },
         (err) => console.error("onSnapshot(ordenes admin):", err)
       );
       return () => unsub();
     }
 
-    // MENSAJERO → preferimos UID (usa el índice compuesto)
+    // MENSAJERO → preferimos UID, siempre dentro de la misma empresa
     if (uid) {
       const qUid = query(
         ref,
+        where("empresaId", "==", empresaId),
         where("asignadoUid", "==", uid),
-        where("entregado", "==", false),
-        orderBy("createdAt", "desc")
+        where("entregado", "==", false)
       );
 
       const unsubUid = onSnapshot(
         qUid,
         (snap) => {
           const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          rows.sort((a, b) => {
+            const ta = a.createdAt?.toMillis?.() || 0;
+            const tb = b.createdAt?.toMillis?.() || 0;
+            return tb - ta;
+          });
           setOrdenes(rows);
         },
         (err) => {
@@ -80,20 +144,28 @@ export default function Entregas() {
             err?.message
           );
 
-          // FALLBACK por nombre (sin orderBy para no pedir otro índice)
+          // FALLBACK por nombre
           if (!nombre) return;
           const qName = query(
             ref,
+            where("empresaId", "==", empresaId),
             where("asignadoNombre", "==", nombre),
             where("entregado", "==", false)
           );
           const unsubName = onSnapshot(
             qName,
-            (s2) => setOrdenes(s2.docs.map((d) => ({ id: d.id, ...d.data() }))),
+            (s2) => {
+              const rows = s2.docs.map((d) => ({ id: d.id, ...d.data() }));
+              rows.sort((a, b) => {
+                const ta = a.createdAt?.toMillis?.() || 0;
+                const tb = b.createdAt?.toMillis?.() || 0;
+                return tb - ta;
+              });
+              setOrdenes(rows);
+            },
             (e2) => console.error("onSnapshot(fallback nombre):", e2)
           );
 
-          // devolvemos el unsub del fallback
           return () => unsubName();
         }
       );
@@ -101,25 +173,77 @@ export default function Entregas() {
       return () => unsubUid();
     }
 
-    // Si no hay uid, probamos por nombre (último recurso)
+    // Sin uid, probamos por nombre (último recurso)
     if (nombre) {
       const qName = query(
         ref,
+        where("empresaId", "==", empresaId),
         where("asignadoNombre", "==", nombre),
         where("entregado", "==", false)
       );
       const unsubName = onSnapshot(
         qName,
-        (snap) => setOrdenes(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+        (snap) => {
+          const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          rows.sort((a, b) => {
+            const ta = a.createdAt?.toMillis?.() || 0;
+            const tb = b.createdAt?.toMillis?.() || 0;
+            return tb - ta;
+          });
+          setOrdenes(rows);
+        },
         (err) => console.error("onSnapshot(nombre sin uid):", err)
       );
       return () => unsubName();
     }
 
-    // Sin uid ni nombre → nada que mostrar
     setOrdenes([]);
     return () => {};
-  }, [rol, usuario?.id, usuario?.uid, usuario?.userId, usuario?.usuarioId, usuario?.nombre]);
+  }, [
+    empresaId,
+    rol,
+    usuario?.id,
+    usuario?.uid,
+    usuario?.userId,
+    usuario?.usuarioId,
+    usuario?.nombre,
+  ]);
+
+  // Auto-estado del mensajero
+  const lastEstadoRef = useRef(null);
+  useEffect(() => {
+    if (rol === "administrador") return;
+    if (!mensajeroId || !empresaId) return;
+
+    const tieneRecibidas = ordenes.some((o) => !!o.recibida && !o.entregado);
+    const tieneAsignadasNoRecibidas = ordenes.some((o) => !o.recibida && !o.entregado);
+
+    let estadoCalculado = "disponible";
+    if (tieneRecibidas) estadoCalculado = "en_ruta";
+    else if (tieneAsignadasNoRecibidas) estadoCalculado = "listo_para_ruta";
+
+    if (lastEstadoRef.current === estadoCalculado) return;
+    lastEstadoRef.current = estadoCalculado;
+
+    (async () => {
+      try {
+        const refM = doc(db, "ubicacionesMensajeros", mensajeroId);
+        await setDoc(
+          refM,
+          {
+            empresaId,
+            nombre: mensajeroNombre,
+            estado: estadoCalculado,
+            estadoUpdatedAt: serverTimestamp(),
+            lastPingAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      } catch (e) {
+        console.warn("Auto-estado mensajero falló:", e?.message);
+      }
+    })();
+  }, [ordenes, rol, mensajeroId, mensajeroNombre, empresaId]);
 
   // Acciones
   const marcarComoRecibidaYNavegar = async (orden) => {
@@ -129,8 +253,25 @@ export default function Entregas() {
         fechaRecibida: serverTimestamp(),
       });
 
+      try {
+        const refM = doc(db, "ubicacionesMensajeros", mensajeroId);
+        await setDoc(
+          refM,
+          {
+            empresaId,
+            nombre: mensajeroNombre,
+            estado: "en_ruta",
+            estadoUpdatedAt: serverTimestamp(),
+            lastPingAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      } catch (e) {
+        console.warn("No pude actualizar estado del mensajero (en_ruta):", e?.message);
+      }
+
       const { lat, lng } = getCoords(orden);
-      if (lat != null && lng != null) {
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
         navigate(`/mapa/${orden.id}`, {
           state: {
             ordenId: orden.id,
@@ -168,6 +309,23 @@ export default function Entregas() {
         fechaEntregada: serverTimestamp(),
         tiempoTotalEntrega: minutos,
       });
+
+      try {
+        const refM = doc(db, "ubicacionesMensajeros", mensajeroId);
+        await setDoc(
+          refM,
+          {
+            empresaId,
+            nombre: mensajeroNombre,
+            estado: "disponible",
+            estadoUpdatedAt: serverTimestamp(),
+            lastPingAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      } catch (e) {
+        console.warn("No pude actualizar estado del mensajero (disponible):", e?.message);
+      }
     } catch (e) {
       console.error("Entregada:", e);
       alert("No pude marcar como entregada.");
@@ -176,9 +334,10 @@ export default function Entregas() {
 
   // Helpers UI
   const gmapsUrl = (lat, lng) =>
-    lat != null && lng != null ? `https://www.google.com/maps?q=${lat},${lng}` : null;
+    Number.isFinite(lat) && Number.isFinite(lng)
+      ? `https://www.google.com/maps?q=${lat},${lng}`
+      : null;
 
-  // Render
   const titulo =
     rol === "administrador" ? "Órdenes (Administrador)" : "Mis Órdenes Asignadas";
 
@@ -186,17 +345,27 @@ export default function Entregas() {
     <div style={{ padding: 20 }}>
       <h2>{titulo}</h2>
 
+      {rol !== "administrador" && (
+        <div style={{ margin: "10px 0", display: "flex", gap: 8, alignItems: "center" }}>
+          <button onClick={toggleEstadoMensajero}>
+            🟢 Alternar estado (Disponible / En ruta)
+          </button>
+          <span style={{ fontSize: 12, color: "#666" }}>
+            * Opcional: el sistema también lo ajusta automáticamente según tus órdenes.
+          </span>
+        </div>
+      )}
+
       {ordenes.length === 0 && <p>No hay órdenes pendientes asignadas.</p>}
 
       <ul style={{ listStyle: "none", padding: 0 }}>
         {ordenes.map((o) => {
           const estado = o.entregado ? "ENTREGADA" : o.recibida ? "RECIBIDA" : "PENDIENTE";
-
           const dir = o.direccionTexto || o.address?.formatted || "—";
           const { lat, lng } = getCoords(o);
           const coordsText =
-            lat != null && lng != null ? `${lat.toFixed(6)}, ${lng.toFixed(6)}` : "—";
-          const gmaps = lat != null && lng != null ? gmapsUrl(lat, lng) : null;
+            Number.isFinite(lat) && Number.isFinite(lng) ? `${lat.toFixed(6)}, ${lng.toFixed(6)}` : "—";
+          const gmaps = gmapsUrl(lat, lng);
 
           return (
             <li
@@ -216,7 +385,8 @@ export default function Entregas() {
                 Fecha/Hora: {o.fecha || "—"} {o.hora || ""} — Monto:{" "}
                 {o.monto != null ? `$${o.monto}` : "—"}
               </div>
-              <div>Dirección: {dir} — Coords: {coordsText}
+              <div>
+                Dirección: {dir} — Coords: {coordsText}
                 {gmaps && (
                   <>
                     {" — "}
@@ -226,13 +396,9 @@ export default function Entregas() {
                   </>
                 )}
               </div>
-              <div>
-                Estado: <b>{estado}</b>
-              </div>
+              <div>Estado: <b>{estado}</b></div>
 
-              {/* Acciones */}
               <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {/* Ver en mapa: siempre visible para Admin/Operador/Mensajero */}
                 <button
                   onClick={() =>
                     navigate(`/mapa/${o.id}`, {
@@ -250,6 +416,24 @@ export default function Entregas() {
                   }
                 >
                   🗺️ Ver en mapa
+                </button>
+
+                <button
+                  onClick={() =>
+                    navigate(`/ruta-mensajero/${o.id}`, {
+                      state: {
+                        ordenId: o.id,
+                        lat,
+                        lng,
+                        direccion: o.direccionTexto || o.address?.formatted || "",
+                        cliente: o.cliente || "",
+                        numeroFactura: o.numeroFactura || "",
+                        address: o.address || null,
+                      },
+                    })
+                  }
+                >
+                  🧭 Navegar (en app)
                 </button>
 
                 {!o.entregado && !o.recibida && (
