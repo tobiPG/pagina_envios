@@ -4,9 +4,9 @@ import { db } from "../firebaseConfig";
 import { diffOrden } from "./diffOrden";
 
 /**
- * Registra cambios de orden en /cambiosOrden cumpliendo reglas:
+ * Registra cambios de orden en /historialCambios cumpliendo reglas:
  * - Debe incluir empresaId (hasCompanyIdInCreate).
- * - Colección correcta: cambiosOrden.
+ * - Campo de timestamp: ts (lo espera tu HistorialCambios.jsx).
  */
 export async function logCambioOrden({ orderId, empresaId, antes, despues, actor, motivo }) {
   if (!empresaId) throw new Error("logCambioOrden: falta empresaId");
@@ -22,11 +22,12 @@ export async function logCambioOrden({ orderId, empresaId, antes, despues, actor
     actorNombre: actor?.nombre || actor?.usuario || "desconocido",
     actorRol: actor?.rol || "desconocido",
     motivo: motivo ?? null,
-    createdAt: serverTimestamp(),
+    ts: serverTimestamp(),            // 👈 usa 'ts' (tu pantalla lo muestra)
     meta: {
       cliente: despues?.cliente ?? antes?.cliente ?? null,
     },
   };
 
-  await addDoc(collection(db, "cambiosOrden"), payload);
+  // 👇 colección alineada con tus reglas y tu pantalla
+  await addDoc(collection(db, "historialCambios"), payload);
 }

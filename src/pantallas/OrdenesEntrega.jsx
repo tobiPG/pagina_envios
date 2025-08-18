@@ -1,5 +1,6 @@
 // src/pantallas/OrdenesEntrega.jsx
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { db } from "../firebaseConfig";
 import {
   collection,
@@ -18,10 +19,47 @@ import AddressInput from "../components/AddressInput.jsx";
 import { logCambioOrden } from "../utils/logCambios";
 import { ensureUsuarioActivo } from "../utils/ensureUsuario";
 
-// 👇 Volvemos a la colección que sí permiten tus reglas
+// 👇 Colección permitida por tus reglas
 const COLEC = "ordenes";
 
+/** Normaliza alias de roles (igual que en App.jsx) */
+function normalizeRole(raw) {
+  const r = String(raw || "").trim().toLowerCase();
+  const map = {
+    admin: "administrador",
+    administrador: "administrador",
+    administrator: "administrador",
+    operador: "operador",
+    operator: "operador",
+    mensajero: "mensajero",
+    rider: "mensajero",
+    courier: "mensajero",
+    delivery: "mensajero",
+    deliveryman: "mensajero",
+    repartidor: "mensajero",
+  };
+  return map[r] || r;
+}
+
+// Helpers locales
+const toNumOrNull = (v) => {
+  const n = typeof v === "number" ? v : v != null ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : null;
+};
+const getCoords = (o) => {
+  const lat = toNumOrNull(o?.destinoLat ?? o?.address?.lat);
+  const lng = toNumOrNull(o?.destinoLng ?? o?.address?.lng);
+  return { lat, lng };
+};
+const hasCoords = (o) => {
+  const { lat, lng } = getCoords(o);
+  return Number.isFinite(lat) && Number.isFinite(lng);
+};
+const createdMs = (o) => o?.createdAt?.toMillis?.() ?? 0;
+
 export default function OrdenesEntrega() {
+  const navigate = useNavigate();
+
   // ===== Formulario de creación =====
   const [cliente, setCliente] = useState("");
   const [telefono, setTelefono] = useState("");
@@ -36,6 +74,10 @@ export default function OrdenesEntrega() {
   const [filtroFecha, setFiltroFecha] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // 🔎 Buscador + ordenamiento (todo en memoria)
+  const [busqueda, setBusqueda] = useState("");
+  const [ordenarPor, setOrdenarPor] = useState("createdDesc"); // createdDesc | createdAsc | estado
+
   // ===== Edición =====
   const [ordenEnEdicion, setOrdenEnEdicion] = useState(null);
   const [editCliente, setEditCliente] = useState("");
@@ -48,11 +90,11 @@ export default function OrdenesEntrega() {
   const [mensajeros, setMensajeros] = useState([]);
 
   // Usuario activo
-  const usuarioActivo = useMemo(
-    () => JSON.parse(localStorage.getItem("usuarioActivo") || "null"),
-    []
-  );
-  const rol = usuarioActivo?.rol || "desconocido";
+  const usuarioActivo = useMemo(() => {
+    try { return JSON.parse(localStorage.getItem("usuarioActivo") || "null"); } catch { return null; }
+  }, []);
+  const rolOriginal = usuarioActivo?.rol || "desconocido";
+  const rol = normalizeRole(rolOriginal);
   const empresaIdRaw = usuarioActivo?.empresaId ?? null;
   const empresaId = empresaIdRaw != null ? String(empresaIdRaw) : null;
 
@@ -126,7 +168,7 @@ export default function OrdenesEntrega() {
         );
       } catch (e) { console.error("query(ordenes) error:", e); }
 
-      // Ubicaciones (si tu app aún las usa aquí)
+      // Ubicaciones
       try {
         const refU = collection(db, "ubicacionesMensajeros");
         const qU = query(refU, where("empresaId", "==", empresaId));
@@ -166,10 +208,15 @@ export default function OrdenesEntrega() {
     return {
       id: u?.id || u?.uid || null,
       nombre: u?.nombre || u?.usuario || "desconocido",
-      rol: u?.rol || "desconocido",
+      rol: normalizeRole(u?.rol || "desconocido"),
       empresaId: u?.empresaId != null ? String(u.empresaId) : null,
     };
   }
+
+  const gmapsUrl = (lat, lng) =>
+    Number.isFinite(lat) && Number.isFinite(lng)
+      ? `https://www.google.com/maps?q=${lat},${lng}`
+      : null;
 
   // ===== Crear Orden =====
   const registrarOrden = async () => {
@@ -178,13 +225,19 @@ export default function OrdenesEntrega() {
       alert("Completa cliente, teléfono, factura, monto, fecha, hora y dirección.");
       return;
     }
+    const latN = toNumOrNull(address?.lat);
+    const lngN = toNumOrNull(address?.lng);
+    if (!Number.isFinite(latN) || !Number.isFinite(lngN)) {
+      alert("La dirección debe tener coordenadas válidas.");
+      return;
+    }
 
     const nuevaOrden = {
       empresaId,
       cliente, telefono, numeroFactura, monto, fecha, hora,
-      address,
-      destinoLat: Number(address.lat),
-      destinoLng: Number(address.lng),
+      address: { ...address, lat: latN, lng: lngN },
+      destinoLat: latN,
+      destinoLng: lngN,
       direccionTexto: address.formatted,
       entregado: false,
       recibida: false,
@@ -200,6 +253,7 @@ export default function OrdenesEntrega() {
 
     try {
       setSaving(true);
+      await ensureUsuarioActivo();
       const ref = await addDoc(collection(db, COLEC), nuevaOrden);
       console.log("Orden creada:", ref.id);
       setCliente(""); setTelefono(""); setNumeroFactura("");
@@ -258,7 +312,7 @@ export default function OrdenesEntrega() {
           { merge: true }
         );
       }
-      await logCambioOrden({ orderId: id, empresaId, antes, despues, actor });
+      await logCambioOrden({ orderId: id, empresaId, antes, despues, actor, motivo: "Orden recibida" });
     } catch (e) { console.error("Recibida:", e?.code, e?.message); alert("No pude marcar como recibida."); }
   };
 
@@ -290,17 +344,17 @@ export default function OrdenesEntrega() {
           { merge: true }
         );
       }
-      await logCambioOrden({ orderId: id, empresaId, antes, despues, actor });
+      await logCambioOrden({ orderId: id, empresaId, antes, despues, actor, motivo: "Orden entregada" });
     } catch (e) { console.error("Entregada:", e?.code, e?.message); alert("No pude marcar como entregada."); }
   };
 
   // ===== Edición =====
   const editarOrden = (orden) => {
     setOrdenEnEdicion(orden.id);
-    setEditCliente(orden.cliente);
+    setEditCliente(orden.cliente || "");
     setEditTelefono(orden.telefono || "");
-    setEditNumeroFactura(orden.numeroFactura);
-    setEditMonto(orden.monto);
+    setEditNumeroFactura(orden.numeroFactura || "");
+    setEditMonto(orden.monto || "");
     setEditAddress(orden.address || null);
   };
 
@@ -312,15 +366,18 @@ export default function OrdenesEntrega() {
     const orden = ordenes.find((o) => o.id === ordenEnEdicion);
     if (!orden) return;
 
+    const latN = editAddress ? toNumOrNull(editAddress.lat) : null;
+    const lngN = editAddress ? toNumOrNull(editAddress.lng) : null;
+
     const antes = { ...orden };
     const cambios = {
       cliente: editCliente,
       telefono: editTelefono,
       numeroFactura: editNumeroFactura,
       monto: editMonto,
-      address: editAddress,
-      destinoLat: editAddress ? Number(editAddress.lat) : null,
-      destinoLng: editAddress ? Number(editAddress.lng) : null,
+      address: editAddress ? { ...editAddress, lat: latN, lng: lngN } : null,
+      destinoLat: editAddress ? latN : null,
+      destinoLng: editAddress ? lngN : null,
       direccionTexto: editAddress?.formatted || orden.direccionTexto || null,
       // empresaId/createdAt NO se tocan
     };
@@ -328,19 +385,47 @@ export default function OrdenesEntrega() {
 
     try {
       await updateDoc(doc(db, COLEC, ordenEnEdicion), cambios);
-      await logCambioOrden({ orderId: ordenEnEdicion, empresaId, antes, despues, actor });
+      await logCambioOrden({ orderId: ordenEnEdicion, empresaId, antes, despues, actor, motivo: "Edición de orden" });
       setOrdenEnEdicion(null);
       alert("Orden actualizada ✅");
     } catch (e) { console.error("Editar:", e?.code, e?.message); alert("No pude actualizar la orden."); }
   };
 
-  // ===== Render =====
-  const ordenesFiltradas = filtroFecha ? ordenes.filter((o)=>o.fecha===filtroFecha) : ordenes;
+  // ===== Búsqueda/Orden local =====
+  const ordenesFiltradas = useMemo(() => {
+    let base = filtroFecha ? ordenes.filter((o) => o.fecha === filtroFecha) : [...ordenes];
+
+    const q = busqueda.trim().toLowerCase();
+    if (q) {
+      base = base.filter((o) => {
+        const str = [
+          o.cliente,
+          o.telefono,
+          o.numeroFactura,
+          o.direccionTexto,
+          o.address?.formatted,
+        ].map(v => String(v || "").toLowerCase()).join(" | ");
+        return str.includes(q);
+      });
+    }
+
+    if (ordenarPor === "createdDesc") {
+      base.sort((a,b) => createdMs(b) - createdMs(a));
+    } else if (ordenarPor === "createdAsc") {
+      base.sort((a,b) => createdMs(a) - createdMs(b));
+    } else if (ordenarPor === "estado") {
+      const weight = (o) => (o.entregado ? 2 : o.recibida ? 1 : 0);
+      base.sort((a,b) => (weight(a) - weight(b)) || (createdMs(b) - createdMs(a)));
+    }
+
+    return base;
+  }, [ordenes, filtroFecha, busqueda, ordenarPor]);
 
   return (
     <div style={{ padding: 20 }}>
       <h2>Registrar Orden de Entrega</h2>
 
+      {/* Formulario */}
       <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(3, minmax(220px, 1fr))" }}>
         <input type="text" placeholder="Cliente" value={cliente} onChange={(e) => setCliente(e.target.value)} />
         <input type="text" placeholder="Teléfono del cliente" value={telefono} onChange={(e) => setTelefono(e.target.value)} />
@@ -358,7 +443,7 @@ export default function OrdenesEntrega() {
       </div>
 
       {(rol === "operador" || rol === "administrador") && (
-        <button style={{ marginTop: 10 }} onClick={registrarOrden} disabled={saving}>
+        <button style={{ marginTop: 10 }} onClick={registrarOrden} disabled={saving || !address}>
           {saving ? "Guardando..." : "Registrar"}
         </button>
       )}
@@ -374,41 +459,127 @@ export default function OrdenesEntrega() {
         </div>
       )}
 
-      <h3 style={{ marginTop: 20 }}>Filtrar por Fecha</h3>
-      <input type="date" value={filtroFecha} onChange={(e) => setFiltroFecha(e.target.value)} />
+      {/* Filtros / Búsqueda / Orden */}
+      <h3 style={{ marginTop: 20 }}>Filtros</h3>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <input
+          type="date"
+          value={filtroFecha}
+          onChange={(e) => setFiltroFecha(e.target.value)}
+          style={{ minWidth: 170 }}
+        />
+        <input
+          type="text"
+          placeholder="Buscar (cliente / factura / teléfono / dirección)…"
+          value={busqueda}
+          onChange={(e) => setBusqueda(e.target.value)}
+          style={{ flex: 1, minWidth: 220 }}
+        />
+        <select value={ordenarPor} onChange={(e) => setOrdenarPor(e.target.value)}>
+          <option value="createdDesc">Orden: más recientes</option>
+          <option value="createdAsc">Orden: más antiguas</option>
+          <option value="estado">Orden: por estado</option>
+        </select>
+      </div>
 
+      {/* Listado */}
       <h3 style={{ marginTop: 20 }}>Órdenes (tiempo real)</h3>
       <ul>
         {ordenesFiltradas.map((orden) => {
           const estado = orden.entregado ? "ENTREGADA" : orden.recibida ? "RECIBIDA" : "PENDIENTE";
-          const lat = orden.destinoLat ?? orden.address?.lat;
-          const lng = orden.destinoLng ?? orden.address?.lng;
+          const { lat, lng } = getCoords(orden);
+          const sinCoords = !Number.isFinite(lat) || !Number.isFinite(lng);
+          const coordsTxt = Number.isFinite(lat) && Number.isFinite(lng) ? `${lat.toFixed(6)}, ${lng.toFixed(6)}` : "—";
+          const gmaps = gmapsUrl(lat, lng);
 
           return (
             <li key={orden.id} style={{ marginBottom: 12 }}>
               Fecha: {orden.fecha} {orden.hora} | Cliente: {orden.cliente} | Tel: {orden.telefono || "—"} | Nº Factura: {orden.numeroFactura} | Monto: ${orden.monto}{" "}
-              | Dirección: {orden.direccionTexto || orden.address?.formatted || "—"} | Coords: {lat != null && lng != null ? `${Number(lat).toFixed(6)}, ${Number(lng).toFixed(6)}` : "—"}{" "}
-              | Registrado por: {orden.usuario} | Estado: <b>{estado}</b>{" "}
-              {orden.entregado ? (
-                <span> | ✅ Entregado</span>
-              ) : orden.recibida ? (
-                (rol === "administrador" || rol === "mensajero") && (
-                  <button style={{ marginLeft: 8 }} onClick={() => marcarComoEntregado(orden.id)}>
-                    Marcar como Entregado
-                  </button>
-                )
-              ) : (
-                (rol === "administrador" || rol === "mensajero") && (
-                  <button style={{ marginLeft: 8 }} onClick={() => marcarComoRecibida(orden.id)}>
-                    Orden Recibida
-                  </button>
-                )
-              )}
+              | Dirección: {orden.direccionTexto || orden.address?.formatted || "—"} | Coords: {coordsTxt} | Registrado por: {orden.usuario} | Estado: <b>{estado}</b>{" "}
+              {sinCoords && <span style={{ color: "#b00" }}> • ⚠️ Sin destino</span>}
+              {gmaps && <> · <a href={gmaps} target="_blank" rel="noopener noreferrer">Abrir en Google Maps</a></>}
 
+              {/* Acciones rápidas */}
+              <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {/* Detalle */}
+                <button onClick={() => navigate(`/orden/${orden.id}`)}>🔎 Ver detalle</button>
+
+                {/* Mapa y navegación */}
+                {!sinCoords && (
+                  <>
+                    <button
+                      onClick={() =>
+                        navigate(`/mapa/${orden.id}`, {
+                          state: {
+                            ordenId: orden.id,
+                            lat,
+                            lng,
+                            direccion: orden.direccionTexto || orden.address?.formatted || "",
+                            cliente: orden.cliente || "",
+                            numeroFactura: orden.numeroFactura || "",
+                            address: orden.address || null,
+                          },
+                        })
+                      }
+                    >
+                      🗺️ Ver en mapa
+                    </button>
+
+                    <button
+                      onClick={() =>
+                        navigate(`/ruta-mensajero/${orden.id}`, {
+                          state: {
+                            ordenId: orden.id,
+                            lat,
+                            lng,
+                            direccion: orden.direccionTexto || orden.address?.formatted || "",
+                            cliente: orden.cliente || "",
+                            numeroFactura: orden.numeroFactura || "",
+                            address: orden.address || null,
+                          },
+                        })
+                      }
+                    >
+                      🧭 Navegar (en app)
+                    </button>
+                  </>
+                )}
+
+                {/* Fijar destino si falta */}
+                {(rol === "operador" || rol === "administrador") && !orden.entregado && sinCoords && (
+                  <button
+                    onClick={() =>
+                      navigate(`/seleccionar-destino/${orden.id}`, {
+                        state: {
+                          ordenId: orden.id,
+                          direccion: orden.direccionTexto || orden.address?.formatted || "",
+                          address: orden.address || null,
+                        },
+                      })
+                    }
+                  >
+                    📍 Fijar destino
+                  </button>
+                )}
+
+                {/* Estado */}
+                {orden.entregado ? (
+                  <span>✅ Entregado</span>
+                ) : orden.recibida ? (
+                  (rol === "administrador" || rol === "mensajero") && (
+                    <button onClick={() => marcarComoEntregado(orden.id)}>📬 Marcar como Entregado</button>
+                  )
+                ) : (
+                  (rol === "administrador" || rol === "mensajero") && (
+                    <button onClick={() => marcarComoRecibida(orden.id)}>✅ Orden Recibida</button>
+                  )
+                )}
+              </div>
+
+              {/* Edición + Asignación (solo si no está entregada) */}
               {(rol === "operador" || rol === "administrador") && !orden.entregado && (
                 <>
-                  <button style={{ marginLeft: 8 }} onClick={() => editarOrden(orden)}>Editar</button>
-
+                  <button style={{ marginTop: 6 }} onClick={() => editarOrden(orden)}>✏️ Editar</button>
                   <div style={{ marginTop: 6, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                     <span style={{ fontSize: 12, color: "#555" }}>
                       Asignado a: <b>{orden.asignadoNombre || "— Sin asignar —"}</b>
@@ -430,6 +601,7 @@ export default function OrdenesEntrega() {
         })}
       </ul>
 
+      {/* Resumen por día (cuando filtras por fecha) */}
       {filtroFecha && (
         <div style={{ marginTop: 20 }}>
           <h4>Resumen del día</h4>
@@ -439,6 +611,7 @@ export default function OrdenesEntrega() {
         </div>
       )}
 
+      {/* Panel de edición */}
       {ordenEnEdicion && (
         <div style={{ marginTop: 20, border: "1px solid #ccc", padding: 10, borderRadius: 6 }}>
           <h4>Editar Orden</h4>

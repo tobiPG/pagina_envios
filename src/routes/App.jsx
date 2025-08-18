@@ -19,8 +19,11 @@ import MapaMensajeros from "../pantallas/MapaMensajeros";
 import AdminToolsNormalizarFechas from "../pantallas/AdminToolsNormalizarFechas";
 import RutaMensajero from "../pantallas/RutaMensajero";
 
+// 👇 Nuevas pantallas
+import OrdenDetalle from "../pantallas/OrdenDetalle.jsx";
+import SeleccionarDestino from "../pantallas/SeleccionarDestino.jsx";
+
 // 👇 Onboarding multiempresa (públicas + admin)
-// ⚠️ IMPORTS con ruta y extensión exacta (.jsx) y mayúsculas correctas
 import EmpresaRegistro from "../pantallas/Auth/EmpresaRegistro.jsx";
 const PlanSeleccion = lazy(() => import("../pantallas/Auth/PlanSeleccion.jsx"));
 import UsuariosEmpresa from "../pantallas/Admin/UsuariosEmpresa.jsx";
@@ -79,7 +82,7 @@ function Rutas() {
 
   const rol = useMemo(() => normalizeRole(usuario?.rol), [usuario?.rol]);
 
-  // Menú: oculto en rutas públicas (login / crear-empresa / aceptar-invitacion / reclamar-token)
+  // Menú: oculto en rutas públicas
   const pathname = location.pathname || "/";
   const esPublica =
     pathname === "/" ||
@@ -99,7 +102,7 @@ function Rutas() {
         {/* 🔓 Rutas públicas (sin sesión) */}
         <Route path="/crear-empresa" element={<EmpresaRegistro />} />
         <Route path="/aceptar-invitacion/:token" element={<AceptarInvitacion />} />
-        <Route path="/reclamar-token" element={<ReclamarToken />} /> {/* 👈 NUEVA */}
+        <Route path="/reclamar-token" element={<ReclamarToken />} />
 
         {/* Si no hay sesión y no coincidió con públicas → login */}
         {!usuario && <Route path="*" element={<Navigate to="/" replace />} />}
@@ -111,8 +114,8 @@ function Rutas() {
             <Route path="/estadisticas" element={<EstadisticasAdmin />} />
             <Route path="/estadisticas-operador" element={<EstadisticasOperador />} />
             <Route path="/ordenes" element={<OrdenesEntrega />} />
-            <Route path="/clientes" element={<RegistroClientes />} />
-            <Route path="/productos" element={<RegistroProductos />} />
+            <Route path="/orden/:id" element={<OrdenDetalle />} />                {/* 👈 nuevo */}
+            <Route path="/seleccionar-destino/:id" element={<SeleccionarDestino />} /> {/* 👈 nuevo */}
             <Route path="/historial" element={<HistorialCambios />} />
             <Route path="/eta" element={<ETA />} />
             <Route path="/ruta" element={<RutaOptimizada />} />
@@ -133,6 +136,8 @@ function Rutas() {
           <>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/ordenes" element={<OrdenesEntrega />} />
+            <Route path="/orden/:id" element={<OrdenDetalle />} />                {/* 👈 nuevo */}
+            <Route path="/seleccionar-destino/:id" element={<SeleccionarDestino />} /> {/* 👈 nuevo */}
             <Route path="/mapa/:id" element={<MapaMensajeros />} />
             <Route path="/ruta-mensajero/:id" element={<RutaMensajero />} />
             <Route path="*" element={<Navigate to="/ordenes" replace />} />
@@ -143,6 +148,8 @@ function Rutas() {
         {usuario && rol === "mensajero" && (
           <>
             <Route path="/entregas" element={<Entregas />} />
+            <Route path="/orden/:id" element={<OrdenDetalle />} />                {/* opcional lectura */}
+            <Route path="/seleccionar-destino/:id" element={<SeleccionarDestino />} /> {/* 👈 nuevo */}
             <Route path="/ruta-mensajero/:id" element={<RutaMensajero />} />
             <Route path="*" element={<Navigate to="/entregas" replace />} />
           </>

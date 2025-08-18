@@ -7,7 +7,11 @@ export function diffOrden(antes = {}, despues = {}) {
     "mensajero", "vehiculo",
     "estado", "entregado", "recibida",
     "tiempoEstimado", "tiempoReal", "tiempoTotalEntrega",
-    // Si luego usas dirección normalizada: "address.formatted"
+
+    // 👇 Para registrar cambios de destino/dirección
+    "direccionTexto",
+    "destinoLat", "destinoLng",
+    "address.formatted", "address.lat", "address.lng",
   ];
 
   const cambios = [];

@@ -13,6 +13,7 @@ import {
   setDoc,
   getDoc,
 } from "firebase/firestore";
+import PingUbicacion from "../components/PingUbicacion.jsx"; // 👈 NUEVO
 
 export default function Entregas() {
   const navigate = useNavigate();
@@ -346,13 +347,15 @@ export default function Entregas() {
       <h2>{titulo}</h2>
 
       {rol !== "administrador" && (
-        <div style={{ margin: "10px 0", display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ margin: "10px 0", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <button onClick={toggleEstadoMensajero}>
             🟢 Alternar estado (Disponible / En ruta)
           </button>
           <span style={{ fontSize: 12, color: "#666" }}>
             * Opcional: el sistema también lo ajusta automáticamente según tus órdenes.
           </span>
+          {/* 👇 Nuevo: ping de ubicación en vivo (cumple reglas, no toca 'estado') */}
+          <PingUbicacion />
         </div>
       )}
 
