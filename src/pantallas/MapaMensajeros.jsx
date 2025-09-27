@@ -1,6 +1,6 @@
 // src/pantallas/MapaMensajeros.jsx
-import { useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { useEffect, useMemo, useState, Fragment } from "react";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { db } from "../firebaseConfig";
 import {
   collection,
@@ -12,14 +12,14 @@ import {
   where,
 } from "firebase/firestore";
 
-import { MapContainer, TileLayer, Marker, Popup, Tooltip, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, Tooltip, useMap, CircleMarker, Polyline } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
-import { ensureUsuarioActivo } from "../utils/ensureUsuario"; // 👈 IMPORTANTE
+import { ensureUsuarioActivo } from "../utils/ensureUsuario";
 
 // ===== Config =====
 const COLEC_UBI = "ubicacionesMensajeros";
-const COLEC_ORD = "ordenes"; // 👈 usar la colección que permiten tus reglas
+const COLEC_ORD = "ordenes";
 
 // Ícono del mensajero
 const iconMensajero = new L.Icon({
@@ -27,6 +27,15 @@ const iconMensajero = new L.Icon({
   iconSize: [36, 36],
   iconAnchor: [18, 36],
   popupAnchor: [0, -30],
+});
+
+// Ícono “mi ubicación”
+const iconYo = L.divIcon({
+  className: "yo-dot",
+  html: `<span class="mm-yo"></span>`,
+  iconSize: [18, 18],
+  iconAnchor: [9, 9],
+  popupAnchor: [0, -10],
 });
 
 // ====== Íconos de destino por estado ======
@@ -82,6 +91,18 @@ function abrirRutaGoogle(destLat, destLng, useOrigin = true) {
   }
 }
 
+// helper para volar el mapa a coords
+function FlyToBtn({ to, children = "Centrar mensajero", zoom = 15 }) {
+  const map = useMap();
+  if (!to || !Number.isFinite(to[0]) || !Number.isFinite(to[1])) return null;
+  return (
+    <button className="mm-btn" style={{ padding: "4px 8px" }} onClick={() => map.flyTo(to, zoom)}>
+      {children}
+    </button>
+  );
+}
+
+// Botón “Ajustar vista”
 function FitBoundsBtn({ bounds }) {
   const map = useMap();
   return (
@@ -90,17 +111,8 @@ function FitBoundsBtn({ bounds }) {
         if (!bounds || bounds.length === 0) return;
         map.fitBounds(bounds, { padding: [30, 30] });
       }}
-      style={{
-        position: "absolute",
-        zIndex: 1000,
-        top: 12,
-        right: 12,
-        background: "#fff",
-        border: "1px solid #ddd",
-        borderRadius: 8,
-        padding: "6px 10px",
-        cursor: "pointer",
-      }}
+      className="mm-btn mm-fab"
+      style={{ position: "absolute", zIndex: 1000, top: 12, right: 12 }}
       title="Ajustar mapa a mensajeros y destinos"
     >
       Ajustar vista
@@ -108,9 +120,36 @@ function FitBoundsBtn({ bounds }) {
   );
 }
 
+// Botón “Mi ubicación”
+function MiUbicBtn({ onFound }) {
+  const map = useMap();
+  return (
+    <button
+      className="mm-btn mm-fab"
+      style={{ position: "absolute", zIndex: 1000, top: 56, right: 12 }}
+      onClick={() => {
+        if (!("geolocation" in navigator)) return alert("Geolocalización no soportada");
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            const lat = pos.coords.latitude;
+            const lng = pos.coords.longitude;
+            onFound && onFound({ lat, lng });
+            map.setView([lat, lng], 15);
+          },
+          (err) => alert(err?.message || "No pude obtener tu ubicación"),
+          { enableHighAccuracy: true, timeout: 7000 }
+        );
+      }}
+      title="Centrar en mi ubicación"
+    >
+      Mi ubicación
+    </button>
+  );
+}
+
 function BadgeEstado({ estado }) {
   const e = (estado || "").toLowerCase();
-  const color = e === "en_ruta" ? "#0a7" : e === "disponible" ? "#09f" : e === "listo_para_ruta" ? "#6a5acd" : "#999";
+  const color = e === "en_ruta" ? "#22c55e" : e === "disponible" ? "#3b82f6" : e === "listo_para_ruta" ? "#6d28d9" : "#999";
   const label =
     e === "en_ruta" ? "En ruta" :
     e === "disponible" ? "Disponible" :
@@ -141,9 +180,8 @@ function Legend() {
     </div>
   );
   return (
-    <div style={{
+    <div className="mm-card" style={{
       position:"absolute", bottom:12, left:12, zIndex:1000,
-      background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:"6px 10px",
       fontSize:12, color:"#333"
     }}>
       <div style={{fontWeight:600, marginBottom:4}}>Estados del destino</div>
@@ -205,13 +243,27 @@ export default function MapaMensajeros() {
   const [soloHoy, setSoloHoy] = useState(true);
   const [soloPendientes, setSoloPendientes] = useState(true);
 
+  // Estilo de mapa base
+  const [baseMap, setBaseMap] = useState("carto"); // "carto" | "osm"
+  const baseTile = baseMap === "carto"
+    ? {
+        url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+        attribution: '&copy; OpenStreetMap &copy; CARTO',
+      }
+    : {
+        url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        attribution: '&copy; OpenStreetMap contributors',
+      };
+
+  // Mi ubicación
+  const [miUbic, setMiUbic] = useState(null);
+
   const centro = useMemo(() => [18.4861, -69.9312], []);
-  const fechaHoy = hoyYYYYMMDD();
 
   // ===== Asegurar sesión antes de leer Firestore =====
   useEffect(() => {
     (async () => {
-      const ok = await ensureUsuarioActivo(); // 👈 importante
+      const ok = await ensureUsuarioActivo();
       if (!ok) {
         setErrMsg("No hay sesión de Firebase. Inicia sesión nuevamente.");
       }
@@ -222,7 +274,7 @@ export default function MapaMensajeros() {
   useEffect(() => {
     let unsub = null;
     (async () => {
-      const ok = await ensureUsuarioActivo(); // 👈 garantiza request.auth
+      const ok = await ensureUsuarioActivo();
       if (!ok) { setErrMsg("No autenticado."); return; }
       if (!empresaId) { setErrMsg("Falta empresaId."); return; }
 
@@ -258,49 +310,31 @@ export default function MapaMensajeros() {
     return () => { if (unsub) unsub(); };
   }, [empresaId]);
 
-  // Realtime: ordenes (vista general)
+  // Realtime: ordenes (vista general) — SIN FALLBACK
   useEffect(() => {
     if (isFocusMode) return;
-    let unsub = null, unsubFallback = null;
+    let unsub = null;
     (async () => {
       const ok = await ensureUsuarioActivo();
       if (!ok) { setErrMsg("No autenticado."); return; }
       if (!empresaId) { setErrMsg("Falta empresaId."); return; }
 
       const ref = collection(db, COLEC_ORD);
+      const qO = query(ref, where("empresaId", "==", empresaId), orderBy("createdAt", "desc"));
       unsub = onSnapshot(
-        query(ref, where("empresaId", "==", empresaId), orderBy("createdAt", "desc")),
+        qO,
         (snap) => {
           const arr = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
           setOrdenesAll(arr);
           setErrMsg("");
         },
-        (err) => {
-          console.error("onSnapshot ordenes:", err);
-          if (err?.code === "failed-precondition") {
-            // Fallback sin orderBy si falta índice
-            unsubFallback = onSnapshot(
-              query(ref, where("empresaId", "==", empresaId)),
-              (snap2) => {
-                const arr2 = snap2.docs.map((d) => ({ id: d.id, ...d.data() }));
-                arr2.sort((a, b) => (b?.createdAt?.toMillis?.() ?? 0) - (a?.createdAt?.toMillis?.() ?? 0));
-                setOrdenesAll(arr2);
-                setErrMsg("Falta índice (empresaId + createdAt). Usando fallback temporal.");
-              },
-              (e2) => setErrMsg(e2?.message || "No pude leer órdenes (fallback).")
-            );
-          } else if (err?.code === "permission-denied") {
-            setErrMsg("Permiso denegado al leer órdenes. Verifica reglas y empresaId en cada doc.");
-          } else {
-            setErrMsg(err?.message || "No pude leer órdenes.");
-          }
-        }
+        (err) => setErrMsg(err?.message || "No pude leer órdenes.")
       );
     })();
-    return () => { if (unsub) unsub(); if (unsubFallback) unsubFallback(); };
+    return () => { if (unsub) unsub(); };
   }, [isFocusMode, empresaId]);
 
-  // Focus: cargar la orden puntual (desde 'ordenes', no 'ordenesEntrega')
+  // Focus: cargar la orden puntual
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -310,7 +344,7 @@ export default function MapaMensajeros() {
       setLoadingFocus(true);
       setErrorFocus("");
       try {
-        const ref = doc(db, COLEC_ORD, focusOrderId); // 👈 colección correcta
+        const ref = doc(db, COLEC_ORD, focusOrderId);
         const snap = await getDoc(ref);
         if (!mounted) return;
 
@@ -367,8 +401,11 @@ export default function MapaMensajeros() {
       const { lat, lng } = getCoords(o);
       if (Number.isFinite(lat) && Number.isFinite(lng)) pts.push([lat, lng]);
     });
+    if (miUbic && Number.isFinite(miUbic.lat) && Number.isFinite(miUbic.lng)) {
+      pts.push([miUbic.lat, miUbic.lng]);
+    }
     return pts;
-  }, [isFocusMode, focusOrder, hasStateCoords, stateLat, stateLng, mensajeros, ordenes]);
+  }, [isFocusMode, focusOrder, hasStateCoords, stateLat, stateLng, mensajeros, ordenes, miUbic]);
 
   const lastLoc = useMemo(() => {
     try { return JSON.parse(localStorage.getItem("ubicacionMensajero") || "null"); } catch { return null; }
@@ -393,6 +430,47 @@ export default function MapaMensajeros() {
   const puedeMostrarFocus =
     isFocusMode && Number.isFinite(focusCoords.lat) && Number.isFinite(focusCoords.lng);
 
+  // KPIs
+  const kpis = useMemo(() => {
+    const mens = {
+      total: mensajeros.length,
+      disponible: mensajeros.filter(m => m.estado === "disponible").length,
+      en_ruta: mensajeros.filter(m => m.estado === "en_ruta").length,
+      listo_para_ruta: mensajeros.filter(m => m.estado === "listo_para_ruta").length,
+      otros: mensajeros.filter(m => !["disponible","en_ruta","listo_para_ruta"].includes(m.estado)).length,
+    };
+    const dest = {
+      total: ordenes.length,
+      pendientes: ordenes.filter(o => !o.entregado && !o.recibida).length,
+      recibidas: ordenes.filter(o => o.recibida && !o.entregado).length,
+      entregadas: ordenes.filter(o => o.entregado).length,
+    };
+    return { mens, dest };
+  }, [mensajeros, ordenes]);
+
+  // ===== CSS inyectado =====
+  try {
+    if (!document.getElementById("mapaMensajerosCss")) {
+      const css = document.createElement("style");
+      css.id = "mapaMensajerosCss";
+      css.innerHTML = `
+        .mm-card{border:1px solid #e5e7eb;border-radius:12px;background:#fff;box-shadow:0 1px 2px rgba(16,24,40,.04);padding:10px}
+        .mm-kpis{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+        .pill{display:inline-block;padding:6px 10px;border-radius:999px;border:1px solid #e5e7eb;background:#f8fafc;color:#374151;font-size:12px;font-weight:600;line-height:1}
+        .pill.blue{background:#eef2ff;border-color:#c7d2fe;color:#3730a3}
+        .pill.green{background:#ecfdf5;border-color:#bbf7d0;color:#065f46}
+        .pill.gray{background:#f1f5f9;border-color:#e2e8f0;color:#334155}
+        .pill.orange{background:#fff7ed;border-color:#fed7aa;color:#9a3412}
+        .mm-btn{background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;padding:8px 12px;cursor:pointer;color:#374151}
+        .mm-btn:hover{background:#f8fafc}
+        .mm-fab{box-shadow:0 1px 4px rgba(0,0,0,.08)}
+        .mm-topbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:6px;margin-bottom:10px}
+        .mm-yo{display:inline-block;width:18px;height:18px;border-radius:50%;background:#2563eb;border:2px solid #fff;box-shadow:0 0 0 4px rgba(37,99,235,.15)}
+      `;
+      document.head.appendChild(css);
+    }
+  } catch {}
+
   return (
     <div style={{ padding: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
@@ -412,17 +490,37 @@ export default function MapaMensajeros() {
         </div>
       </div>
 
+      {/* KPIs y selector de mapa base */}
       {!isFocusMode && (
-        <div
-          style={{
-            display: "flex",
-            gap: 12,
-            alignItems: "center",
-            flexWrap: "wrap",
-            marginTop: 6,
-            marginBottom: 10,
-          }}
-        >
+        <div className="mm-card">
+          <div className="mm-kpis">
+            <span className="pill gray">Mensajeros: <b>{kpis.mens.total}</b></span>
+            <span className="pill blue">Disponibles: <b>{kpis.mens.disponible}</b></span>
+            <span className="pill green">En ruta: <b>{kpis.mens.en_ruta}</b></span>
+            <span className="pill gray">Listos: <b>{kpis.mens.listo_para_ruta}</b></span>
+            <span className="pill gray">Otros: <b>{kpis.mens.otros}</b></span>
+            <span className="pill gray" style={{ marginLeft: 12 }}>Destinos: <b>{kpis.dest.total}</b></span>
+            <span className="pill orange">Pendientes: <b>{kpis.dest.pendientes}</b></span>
+            <span className="pill blue">Recibidas: <b>{kpis.dest.recibidas}</b></span>
+            <span className="pill green">Entregadas: <b>{kpis.dest.entregadas}</b></span>
+            <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+              <label style={{ fontSize: 12, color: "#334155" }}>Mapa base</label>
+              <select
+                value={baseMap}
+                onChange={(e) => setBaseMap(e.target.value)}
+                className="mm-btn"
+                style={{ padding: "6px 8px" }}
+              >
+                <option value="carto">Claro (recomendado)</option>
+                <option value="osm">Clásico OSM</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!isFocusMode && (
+        <div className="mm-topbar">
           <label style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
             <input type="checkbox" checked={soloHoy} onChange={(e) => setSoloHoy(e.target.checked)} />
             Solo hoy ({hoyYYYYMMDD()})
@@ -482,10 +580,7 @@ export default function MapaMensajeros() {
       <div style={{ height: 560, position: "relative" }}>
         <Legend />
         <MapContainer center={centro} zoom={isFocusMode ? 15 : 12} style={{ height: "100%", width: "100%" }}>
-          <TileLayer
-            attribution='&copy; OpenStreetMap contributors'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
+          <TileLayer attribution={baseTile.attribution} url={baseTile.url} />
 
           {/* Mensajeros */}
           {mensajeros.map((m) => {
@@ -494,23 +589,36 @@ export default function MapaMensajeros() {
             if (!Number.isFinite(latN) || !Number.isFinite(lngN)) return null;
             const pos = [latN, lngN];
             const fecha = m.lastPingAt ? m.lastPingAt.toLocaleString() : "";
+
+            const auraColor =
+              m.estado === "en_ruta" ? "#22c55e" :
+              m.estado === "disponible" ? "#3b82f6" :
+              m.estado === "listo_para_ruta" ? "#6d28d9" : "#94a3b8";
+
             return (
-              <Marker key={`rider-${m.id}`} position={pos} icon={iconMensajero}>
-                <Tooltip permanent direction="top" offset={[0, -18]}>
-                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                    <b>{m.nombre || m.id}</b> <BadgeEstado estado={m.estado} />
-                  </div>
-                </Tooltip>
-                <Popup>
-                  <div style={{ fontSize: 14 }}>
-                    <div style={{ marginBottom: 4 }}>
-                      <b>Mensajero:</b> {m.nombre || m.id} &nbsp; <BadgeEstado estado={m.estado} />
+              <Fragment key={`rider-wrap-${m.id}`}>
+                <CircleMarker
+                  center={pos}
+                  radius={14}
+                  pathOptions={{ color: auraColor, fillColor: auraColor, fillOpacity: 0.12, weight: 1 }}
+                />
+                <Marker position={pos} icon={iconMensajero}>
+                  <Tooltip permanent direction="top" offset={[0, -18]}>
+                    <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                      <b>{m.nombre || m.id}</b> <BadgeEstado estado={m.estado} />
                     </div>
-                    <div><b>Lat/Lng:</b> {pos[0].toFixed(5)}, {pos[1].toFixed(5)}</div>
-                    <div><b>Último ping:</b> {fecha || "—"}</div>
-                  </div>
-                </Popup>
-              </Marker>
+                  </Tooltip>
+                  <Popup>
+                    <div style={{ fontSize: 14 }}>
+                      <div style={{ marginBottom: 4 }}>
+                        <b>Mensajero:</b> {m.nombre || m.id} &nbsp; <BadgeEstado estado={m.estado} />
+                      </div>
+                      <div><b>Lat/Lng:</b> {latN.toFixed(5)}, {lngN.toFixed(5)}</div>
+                      <div><b>Último ping:</b> {fecha || "—"}</div>
+                    </div>
+                  </Popup>
+                </Marker>
+              </Fragment>
             );
           })}
 
@@ -520,25 +628,46 @@ export default function MapaMensajeros() {
               const { lat, lng } = getCoords(o);
               if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
               const estado = o.entregado ? "ENTREGADA" : o.recibida ? "RECIBIDA" : "PENDIENTE";
+
+              const asignadoUid = o.asignadoUid || null;
+              const asignadoNombre = o.asignadoNombre || "—";
+              const mensa = asignadoUid ? mensajeros.find(m => String(m.id) === String(asignadoUid)) : null;
+              const mensaPos = mensa && Number.isFinite(Number(mensa.lat)) && Number.isFinite(Number(mensa.lng))
+                ? [Number(mensa.lat), Number(mensa.lng)]
+                : null;
+
               return (
                 <Marker key={`ord-${o.id}`} position={[lat, lng]} icon={iconPorEstado(o)}>
                   <Popup>
-                    <div style={{ fontSize: 14, minWidth: 220 }}>
+                    <div style={{ fontSize: 14, minWidth: 240 }}>
                       <div><b>Cliente:</b> {o.cliente}</div>
                       <div><b>Tel:</b> {o.telefono || "—"}</div>
                       <div><b>Factura:</b> {o.numeroFactura}</div>
                       <div><b>Fecha/Hora:</b> {o.fecha} {o.hora}</div>
                       <div><b>Estado:</b> {estado}</div>
+
+                      <div style={{ marginTop: 6 }}>
+                        <b>Mensajero asignado:</b> {asignadoNombre}
+                        {asignadoUid && (
+                          <span style={{ fontSize: 12, color: "#6b7280" }}> ({String(asignadoUid).slice(0,6)}…)</span>
+                        )}{" "}
+                        {mensa && <BadgeEstado estado={mensa.estado} />}
+                      </div>
+
                       <div style={{ marginTop: 6, fontSize: 12, color: "#555" }}>
                         {o.direccionTexto || o.address?.formatted}
                       </div>
-                      <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-                        <button onClick={() => abrirRutaGoogle(lat, lng, true)} style={{ padding: "4px 8px" }}>
+                      <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button onClick={() => abrirRutaGoogle(lat, lng, true)} className="mm-btn" style={{ padding: "4px 8px" }}>
                           Ruta desde aquí
                         </button>
-                        <button onClick={() => abrirRutaGoogle(lat, lng, false)} style={{ padding: "4px 8px" }}>
+                        <button onClick={() => abrirRutaGoogle(lat, lng, false)} className="mm-btn" style={{ padding: "4px 8px" }}>
                           Solo destino
                         </button>
+                        {mensaPos && <FlyToBtn to={mensaPos}>Centrar mensajero</FlyToBtn>}
+                        <Link className="mm-btn" style={{ padding: "4px 8px" }} to={`/orden/${o.id}`}>
+                          Ver orden
+                        </Link>
                       </div>
                     </div>
                   </Popup>
@@ -548,37 +677,92 @@ export default function MapaMensajeros() {
 
           {/* Vista enfocada: solo la orden actual */}
           {isFocusMode && puedeMostrarFocus && (
-            <Marker position={[focusCoords.lat, focusCoords.lng]} icon={iconPorEstado(focusOrder)}>
-              <Popup>
-                <div style={{ fontSize: 14, minWidth: 220 }}>
-                  {state?.cliente || focusOrder?.cliente ? <div><b>Cliente:</b> {state?.cliente || focusOrder?.cliente}</div> : null}
-                  {state?.numeroFactura || focusOrder?.numeroFactura ? <div><b>Factura:</b> {state?.numeroFactura || focusOrder?.numeroFactura}</div> : null}
-                  {state?.direccion || state?.address?.formatted || focusOrder?.direccionTexto || focusOrder?.address?.formatted ? (
-                    <div style={{ marginTop: 6, fontSize: 12, color: "#555" }}>
-                      {state?.direccion || state?.address?.formatted || focusOrder?.direccionTexto || focusOrder?.address?.formatted}
+            <>
+              <Marker position={[focusCoords.lat, focusCoords.lng]} icon={iconPorEstado(focusOrder)}>
+                <Popup>
+                  <div style={{ fontSize: 14, minWidth: 240 }}>
+                    {state?.cliente || focusOrder?.cliente ? <div><b>Cliente:</b> {state?.cliente || focusOrder?.cliente}</div> : null}
+                    {state?.numeroFactura || focusOrder?.numeroFactura ? <div><b>Factura:</b> {state?.numeroFactura || focusOrder?.numeroFactura}</div> : null}
+
+                    {(focusOrder?.asignadoNombre || focusOrder?.asignadoUid) && (
+                      <div style={{ marginTop: 6 }}>
+                        <b>Mensajero asignado:</b> {focusOrder.asignadoNombre || "—"}
+                        {focusOrder.asignadoUid && (
+                          <span style={{ fontSize: 12, color: "#6b7280" }}> ({String(focusOrder.asignadoUid).slice(0,6)}…)</span>
+                        )}
+                        {(() => {
+                          const m = focusOrder?.asignadoUid
+                            ? mensajeros.find(mm => String(mm.id) === String(focusOrder.asignadoUid))
+                            : null;
+                          return m ? <span style={{ marginLeft: 6 }}><BadgeEstado estado={m.estado} /></span> : null;
+                        })()}
+                      </div>
+                    )}
+
+                    {state?.direccion || state?.address?.formatted || focusOrder?.direccionTexto || focusOrder?.address?.formatted ? (
+                      <div style={{ marginTop: 6, fontSize: 12, color: "#555" }}>
+                        {state?.direccion || state?.address?.formatted || focusOrder?.direccionTexto || focusOrder?.address?.formatted}
+                      </div>
+                    ) : null}
+                    <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button
+                        onClick={() => abrirRutaGoogle(focusCoords.lat, focusCoords.lng, true)}
+                        className="mm-btn"
+                        style={{ padding: "4px 8px" }}
+                      >
+                        Ruta desde aquí
+                      </button>
+                      <button
+                        onClick={() => abrirRutaGoogle(focusCoords.lat, focusCoords.lng, false)}
+                        className="mm-btn"
+                        style={{ padding: "4px 8px" }}
+                      >
+                        Solo destino
+                      </button>
+                      {(() => {
+                        const m = focusOrder?.asignadoUid
+                          ? mensajeros.find(mm => String(mm.id) === String(focusOrder.asignadoUid))
+                          : null;
+                        const p = m && Number.isFinite(Number(m.lat)) && Number.isFinite(Number(m.lng)) ? [Number(m.lat), Number(m.lng)] : null;
+                        return p ? <FlyToBtn to={p}>Centrar mensajero</FlyToBtn> : null;
+                      })()}
+                      {focusOrder?.id && (
+                        <Link className="mm-btn" style={{ padding: "4px 8px" }} to={`/orden/${focusOrder.id}`}>
+                          Ver orden
+                        </Link>
+                      )}
                     </div>
-                  ) : null}
-                  <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-                    <button
-                      onClick={() => abrirRutaGoogle(focusCoords.lat, focusCoords.lng, true)}
-                      style={{ padding: "4px 8px" }}
-                    >
-                      Ruta desde aquí
-                    </button>
-                    <button
-                      onClick={() => abrirRutaGoogle(focusCoords.lat, focusCoords.lng, false)}
-                      style={{ padding: "4px 8px" }}
-                    >
-                      Solo destino
-                    </button>
                   </div>
-                </div>
-              </Popup>
+                </Popup>
+              </Marker>
+
+              {/* línea mensajero ↔ destino (enfocado) */}
+              {(() => {
+                const m = focusOrder?.asignadoUid
+                  ? mensajeros.find(mm => String(mm.id) === String(focusOrder.asignadoUid))
+                  : null;
+                const p = m && Number.isFinite(Number(m.lat)) && Number.isFinite(Number(m.lng)) ? [Number(m.lat), Number(m.lng)] : null;
+                if (!p) return null;
+                return (
+                  <Polyline
+                    positions={[p, [focusCoords.lat, focusCoords.lng]]}
+                    pathOptions={{ color: "#64748b", weight: 3, opacity: 0.7, dashArray: "6 6" }}
+                  />
+                );
+              })()}
+            </>
+          )}
+
+          {/* Mi ubicación */}
+          {miUbic && Number.isFinite(miUbic.lat) && Number.isFinite(miUbic.lng) && (
+            <Marker position={[miUbic.lat, miUbic.lng]} icon={iconYo}>
+              <Tooltip direction="top" offset={[0, -8]}>Mi ubicación</Tooltip>
             </Marker>
           )}
 
           <AutoFitBounds bounds={bounds} />
           <FitBoundsBtn bounds={bounds} />
+          <MiUbicBtn onFound={setMiUbic} />
         </MapContainer>
       </div>
     </div>

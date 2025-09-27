@@ -1,0 +1,160 @@
+:root {
+  /* Paleta pastel (suave) */
+  --bg:            #f7fafc;   /* fondo app */
+  --surface:       #ffffff;   /* tarjetas */
+  --border:        #e6edf3;
+  --text:          #1f2937;   /* gris oscuro suave */
+  --text-muted:    #6b7280;
+
+  --primary-50:    #eef6ff;
+  --primary-100:   #ddeefe;
+  --primary-200:   #c6e2ff;
+  --primary-300:   #a8d1ff;
+  --primary-400:   #7fb7ff;
+  --primary-500:   #5fa3ff;   /* principal */
+  --primary-600:   #3f8dff;   /* hover */
+  --primary-700:   #2c6dd8;   /* active */
+
+  --ok:            #4caf50;
+  --warn:          #f6b93b;
+  --danger:        #ef5350;
+  --chip:          #f3f6fb;
+  --shadow:        0 6px 16px rgba(31,41,55,.06);
+  --radius:        12px;
+}
+
+/* Base */
+html, body, #root {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji","Segoe UI Emoji";
+}
+
+h1,h2,h3 { color: var(--text); }
+small, .muted { color: var(--text-muted); }
+
+/* Tarjetas / contenedores suaves */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+/* Botones suaves */
+button {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  padding: 8px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: transform .06s ease, background .2s ease, border-color .2s ease;
+}
+button:hover {
+  background: var(--primary-50);
+  border-color: var(--primary-200);
+}
+button:active {
+  transform: translateY(1px) scale(.99);
+}
+button:disabled {
+  opacity: .55; cursor: not-allowed;
+}
+
+/* Variantes */
+.btn-primary {
+  background: var(--primary-500);
+  border-color: var(--primary-500);
+  color: #fff;
+}
+.btn-primary:hover { background: var(--primary-600); border-color: var(--primary-600); }
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+}
+.btn-ghost:hover {
+  background: var(--primary-50);
+  border-color: var(--primary-200);
+}
+
+/* Inputs */
+input, select, textarea {
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 10px;
+  padding: 8px 10px;
+  color: var(--text);
+  outline: none;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: var(--primary-400);
+  box-shadow: 0 0 0 3px var(--primary-100);
+}
+
+/* Tablas suaves (si no hay inline fuerte) */
+table {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+}
+thead th {
+  background: #f8fbff;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 12px;
+}
+tbody td {
+  border-bottom: 1px solid var(--border);
+  padding: 10px 12px;
+}
+tbody tr:hover { background: #fbfdff; }
+
+/* Chips / badgets */
+.chip {
+  display: inline-block;
+  background: var(--chip);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+/* Links */
+a { color: var(--primary-600); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* Navbar suave */
+.nav {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.nav-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 10px 14px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.nav a {
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+.nav a.active,
+.nav a:hover {
+  background: var(--primary-50);
+}
+.logout {
+  margin-left: auto;
+}

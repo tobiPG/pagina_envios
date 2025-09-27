@@ -1,0 +1,154 @@
+// firestore.rules
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    /** Helpers **/
+    function authed() { return request.auth != null; }
+    function userDoc() { return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)); }
+    function userEmpresa() { return (userDoc().data.empresaId + ""); }
+    function eqStr(a, b) { return (a + "") == (b + ""); }
+
+    function sameCompany() {
+      return resource.data.empresaId != null && eqStr(resource.data.empresaId, userEmpresa());
+    }
+    function hasCompanyIdInCreate() {
+      return request.resource.data.empresaId != null && eqStr(request.resource.data.empresaId, userEmpresa());
+    }
+
+    // Inmutabilidad/forma de createdAt sin comparar con request.time
+    function createdAtOkOnCreate() {
+      return !('createdAt' in request.resource.data)
+             || request.resource.data.createdAt is timestamp;
+    }
+    function createdAtOkOnUpdate() {
+      return !('createdAt' in request.resource.data)
+             || request.resource.data.createdAt == resource.data.createdAt;
+    }
+    function empresaIdOkOnUpdate() {
+      return !('empresaId' in request.resource.data)
+             || eqStr(request.resource.data.empresaId, resource.data.empresaId);
+    }
+
+    function role() { return (userDoc().data.rol + ""); }
+    function isAdmin() { return role() == "administrador" || role() == "admin" || role() == "administrator"; }
+    function isOperador() { return role() == "operador" || role() == "operator"; }
+    function isMensajero() {
+      return role() == "mensajero" || role() == "rider" || role() == "courier" || role() == "delivery" || role() == "deliveryman" || role() == "repartidor";
+    }
+
+    /** Detección de cambios (diff NUEVO->VIEJO) **/
+    function changedAny(fields) {
+      return request.resource.data.diff(resource.data).changedKeys().hasAny(fields);
+    }
+    function modifiesProof() {
+      return changedAny(['proofUrl','proofAt','proofType','recibeNombre','proofStoragePath','proofByUid','proofByNombre']);
+    }
+    function modifiesEntrega() { return changedAny(['entregado','fechaEntregada','tiempoTotalEntrega']); }
+    function modifiesRecibida() { return changedAny(['recibida','fechaRecibida']); }
+    function modifiesAsignacion() { return changedAny(['asignadoUid','asignadoNombre','asignadoAt']); }
+    function modifiesDatos() {
+      return changedAny([
+        'cliente','telefono','numeroFactura','monto','address','destinoLat','destinoLng','direccionTexto','fecha','hora',
+        'programacionId','programaEntregaId','ordenIndex','prioridad','ventanaInicioStop','ventanaFinStop'
+      ]);
+    }
+
+    function deliveringNow() {
+      return !(resource.data.entregado == true) && (request.resource.data.entregado == true);
+    }
+    function hasProofUrl() {
+      return ('proofUrl' in request.resource.data) && request.resource.data.proofUrl != null;
+    }
+
+    function updateAllowedByRole() {
+      return isAdmin()
+        || (isMensajero() && !(modifiesDatos() || modifiesAsignacion()))
+        || (isOperador() && !(modifiesEntrega() || modifiesRecibida() || modifiesProof()));
+    }
+
+    /** ───── Colecciones ───── **/
+
+    match /usuarios/{uid} {
+      allow read: if authed() && (
+        request.auth.uid == uid ||
+        ((isAdmin() || isOperador()) && resource.data.empresaId != null && eqStr(resource.data.empresaId, userEmpresa()))
+      );
+      allow create: if authed() && (
+        request.auth.uid == uid ||
+        ((isAdmin() || isOperador()) && hasCompanyIdInCreate())
+      );
+      allow update: if authed() && (
+        request.auth.uid == uid ||
+        ((isAdmin() || isOperador()) && resource.data.empresaId != null && eqStr(resource.data.empresaId, userEmpresa()))
+      );
+      allow delete: if authed() && isAdmin() && resource.data.empresaId != null && eqStr(resource.data.empresaId, userEmpresa());
+    }
+
+    match /empresas/{empresaId} {
+      allow read, write: if authed() && eqStr(empresaId, userEmpresa());
+    }
+
+    match /ordenes/{id} {
+      allow read: if authed() && sameCompany();
+      allow create: if authed() && hasCompanyIdInCreate() && createdAtOkOnCreate();
+      allow update: if authed()
+                    && sameCompany()
+                    && createdAtOkOnUpdate()
+                    && empresaIdOkOnUpdate()
+                    && updateAllowedByRole()
+                    && (!deliveringNow() || hasProofUrl());
+      allow delete: if authed() && sameCompany() && isAdmin();
+    }
+
+    match /ubicacionesMensajeros/{uid} {
+      allow read: if authed() && sameCompany();
+      allow create: if authed() && hasCompanyIdInCreate();
+      allow update: if authed() && sameCompany()
+                    && (!('empresaId' in request.resource.data) || eqStr(request.resource.data.empresaId, resource.data.empresaId));
+      allow delete: if false;
+    }
+
+    match /cambiosOrden/{hid} {
+      allow read: if authed() && resource.data.empresaId != null && eqStr(resource.data.empresaId, userEmpresa());
+      allow create: if authed() && request.resource.data.empresaId != null && eqStr(request.resource.data.empresaId, userEmpresa());
+      allow update, delete: if false;
+    }
+
+    match /historialCambios/{hid} {
+      allow read: if authed() && sameCompany();
+      allow create: if authed() && hasCompanyIdInCreate();
+      allow update, delete: if false;
+    }
+
+    match /programaciones/{pid} {
+      allow read: if authed() && resource.data.empresaId != null && eqStr(resource.data.empresaId, userEmpresa());
+      allow create: if authed() && hasCompanyIdInCreate() && createdAtOkOnCreate() && (isAdmin() || isOperador());
+      allow update: if authed()
+                    && resource.data.empresaId != null && eqStr(resource.data.empresaId, userEmpresa())
+                    && empresaIdOkOnUpdate()
+                    && createdAtOkOnUpdate()
+                    && (isAdmin() || isOperador());
+      allow delete: if authed()
+                    && resource.data.empresaId != null && eqStr(resource.data.empresaId, userEmpresa())
+                    && isAdmin();
+    }
+
+    match /programasEntrega/{pid} {
+      allow read: if authed() && resource.data.empresaId != null && eqStr(resource.data.empresaId, userEmpresa());
+      allow create: if authed() && hasCompanyIdInCreate() && createdAtOkOnCreate() && (isAdmin() || isOperador());
+      allow update: if authed()
+                    && resource.data.empresaId != null && eqStr(resource.data.empresaId, userEmpresa())
+                    && empresaIdOkOnUpdate()
+                    && createdAtOkOnUpdate()
+                    && (isAdmin() || isOperador());
+      allow delete: if authed()
+                    && resource.data.empresaId != null && eqStr(resource.data.empresaId, userEmpresa())
+                    && isAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

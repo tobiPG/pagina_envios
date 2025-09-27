@@ -1,36 +1,52 @@
 // src/firebaseConfig.js
-import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
-import { getAuth, setPersistence, browserLocalPersistence } from "firebase/auth";
+import { initializeApp, getApps, getApp } from "firebase/app";
+import { getAuth, connectAuthEmulator } from "firebase/auth";
+import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";
+import { getFunctions, connectFunctionsEmulator } from "firebase/functions";
+import { getStorage, connectStorageEmulator } from "firebase/storage";
 
-const tidy = v => (typeof v === "string" ? v.trim() : v);
-
-const cfg = {
-  apiKey: tidy(import.meta.env.VITE_FIREBASE_API_KEY),
-  authDomain: tidy(import.meta.env.VITE_FIREBASE_AUTH_DOMAIN),
-  projectId: tidy(import.meta.env.VITE_FIREBASE_PROJECT_ID),
-  storageBucket: tidy(import.meta.env.VITE_FIREBASE_STORAGE_BUCKET),
-  messagingSenderId: tidy(import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID),
-  appId: tidy(import.meta.env.VITE_FIREBASE_APP_ID),
+// Config desde .env.local (Vite)
+const firebaseConfig = {
+  apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket:     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId:             import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-// Logs de verificación (seguros)
-console.log("[Firebase cfg] PID:", cfg.projectId || "(vacío)");
-console.log("[Firebase cfg] API:", cfg.apiKey ? cfg.apiKey.slice(0, 8) + "..." : "(vacía)");
+// ⚠️ Debe coincidir con tu backend (functions.region(...))
+// Tu index.js usa us-central1, así que lo ponemos como default.
+const FUNCTIONS_REGION =
+  (import.meta.env.VITE_FIREBASE_FUNCTIONS_REGION || "us-central1").trim();
 
-// Validación dura
-const missing = Object.entries(cfg).filter(([, v]) => !v).map(([k]) => k);
-if (missing.length) {
-  throw new Error(
-    `Faltan variables Firebase en .env.local: ${missing.join(", ")}.
-     Verifica prefijo VITE_ y reinicia Vite (Ctrl+C, npm run dev).`
-  );
-}
-if (!cfg.apiKey.startsWith("AIza")) {
-  throw new Error("apiKey no parece válida (debe iniciar con 'AIza'). Revisa .env.local.");
-}
+// Evita doble inicialización en hot-reload
+const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
-const app = initializeApp(cfg);
-export const db = getFirestore(app);
+// Servicios
 export const auth = getAuth(app);
-setPersistence(auth, browserLocalPersistence).catch(() => {});
+export const db = getFirestore(app);
+
+// Usa la MISMA región que el backend
+export const functions = getFunctions(app, FUNCTIONS_REGION);
+
+export const storage = getStorage(app);
+
+// (Opcional) Emuladores localmente
+const useEmu = import.meta.env.DEV && String(import.meta.env.VITE_USE_FIREBASE_EMULATORS) === "1";
+if (useEmu) {
+  try {
+    connectAuthEmulator(auth, "http://localhost:9099", { disableWarnings: true });
+    connectFirestoreEmulator(db, "localhost", 8080);
+    connectFunctionsEmulator(functions, "localhost", 5001);
+    connectStorageEmulator(storage, "localhost", 9199);
+    console.log("[Firebase] Emuladores conectados (auth:9099, db:8080, funcs:5001, storage:9199).");
+  } catch (e) {
+    console.warn("[Firebase] No se pudieron conectar emuladores:", e);
+  }
+}
+
+// Log útil para depurar región
+console.log("[Firebase] Functions region:", FUNCTIONS_REGION);
+
+export default app;
