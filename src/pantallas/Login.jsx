@@ -195,7 +195,7 @@ export default function Login() {
           Rol
           <select value={rol} onChange={(e) => setRol(e.target.value)}>
             <option value="administrador">Administrador</option>
-            <option value="gerente">Gerente</option> {/* 👈 NUEVO */}
+            <option value="gerente">Gerente</option> 
             <option value="operador">Operador</option>
             <option value="mensajero">Mensajero</option>
           </select>
