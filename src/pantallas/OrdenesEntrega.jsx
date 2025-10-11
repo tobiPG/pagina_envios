@@ -276,8 +276,12 @@ export default function OrdenesEntrega() {
 
       // Ubicaciones
       try {
-        const refU = collection(db, "ubicacionesMensajeros");
-        const qU = query(refU, where("empresaId", "==", empresaId));
+        const refU = collection(db, "usuarios");
+        const qU = query(
+          refU,
+          where("empresaId", "==", empresaId),
+          where("rol", "==", "mensajero") // solo los mensajeros del equipo
+        );
         unsubUbic = onSnapshot(
           qU,
           (snap) => {
@@ -285,27 +289,19 @@ export default function OrdenesEntrega() {
               const data = d.data() || {};
               return {
                 id: d.id,
-                nombre: data.nombre || d.id,
-                estado: normalizeEstado(data.estado || "disponible"),
+                nombre: data.nombre || data.email || d.id,
+                estado: "disponible", // por defecto, si no manejas estados aquí
               };
             });
             setMensajeros(arr);
           },
           (err) => {
-            console.error(
-              "onSnapshot(ubicacionesMensajeros):",
-              err?.code,
-              err?.message
-            );
-            if (err?.code === "permission-denied") {
-              alert(
-                "Permiso denegado al leer ubicaciones. Revisa reglas/empresaId."
-              );
-            }
+            console.error("onSnapshot(usuarios - mensajeros):", err?.code, err?.message);
+            alert("No se pudieron leer los mensajeros del equipo.");
           }
         );
       } catch (e) {
-        console.error("query(ubicacionesMensajeros) error:", e);
+        console.error("query(usuarios - mensajeros) error:", e);
       }
     })();
 
