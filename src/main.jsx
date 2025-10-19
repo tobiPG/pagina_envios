@@ -1,6 +1,6 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import App from "./routes/App.jsx"; // ← asegúrate que este es el archivo correcto
+import App from "./app/router/AppRouter.jsx"; // ← Router principal corregido
 import "./index.css";
 import "./styles/theme.css"; 
 

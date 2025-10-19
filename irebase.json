@@ -1,7 +1,0 @@
-{
-  "functions": { "source": "functions" },
-  "hosting": { "public": "dist" },
-  "storage": {},
-  "firestore": {},
-  "emulators": { "functions": { "port": 5001 } }
-}
