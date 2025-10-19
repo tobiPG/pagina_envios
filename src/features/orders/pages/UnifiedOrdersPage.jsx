@@ -2,17 +2,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { db, functions } from "../../../shared/services/firebase.js";
-import { 
-  collection, 
-  addDoc, 
-  onSnapshot, 
-  query, 
-  where, 
+import {
+  collection,
+  addDoc,
+  onSnapshot,
+  query,
+  where,
   orderBy,
-  serverTimestamp 
+  serverTimestamp,
+  doc,
+  updateDoc,
+  getDocs
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
-import { ensureUsuarioActivo } from "../../../shared/utils/ensureUsuario";
 import AddressInput from "../../../shared/components/AddressInput.jsx";
 
 // Inject CSS once
@@ -81,20 +83,22 @@ export default function UnifiedOrdersPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   
-  // Get user info
-  const usuario = ensureUsuarioActivo();
-  if (!usuario) {
-    navigate("/login");
-    return null;
-  }
-
-  // State
+  // State - TODOS los hooks deben ir ANTES de cualquier return condicional
+  const [usuario, setUsuario] = useState(null);
+  const [userLoading, setUserLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("basic"); // "basic" | "advanced"
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  
+  // Estados para asignación de mensajeros
+  const [mensajeros, setMensajeros] = useState([]);
+  const [loadingMensajeros, setLoadingMensajeros] = useState(false);
+  const [assigningOrder, setAssigningOrder] = useState(null);
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [selectedMensajero, setSelectedMensajero] = useState("");
 
   // Basic form state
   const [basicForm, setBasicForm] = useState({
@@ -140,13 +144,39 @@ export default function UnifiedOrdersPage() {
   // Cloud function
   const createOrderFn = useMemo(() => httpsCallable(functions, "createOrder"), []);
 
+  // Check user on component mount
+  useEffect(() => {
+    try {
+      const usuarioLS = JSON.parse(localStorage.getItem("usuarioActivo") || "null");
+      if (!usuarioLS || !usuarioLS.uid || !usuarioLS.empresaId) {
+        navigate("/login");
+        return;
+      }
+      setUsuario(usuarioLS);
+    } catch (error) {
+      console.error("Error parsing user data:", error);
+      navigate("/login");
+      return;
+    } finally {
+      setUserLoading(false);
+    }
+  }, [navigate]);
+
   // Load orders
   useEffect(() => {
+    if (!usuario || !usuario.empresaId) {
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
+    
+    // Temporalmente quitamos orderBy para evitar el error de índice
+    // Más tarde se puede agregar el índice en Firebase para usar ordenamiento
     const q = query(
       collection(db, "ordenes"),
-      where("empresaId", "==", usuario.empresaId),
-      orderBy("fechaCreacion", "desc")
+      where("empresaId", "==", usuario.empresaId)
+      // orderBy("fechaCreacion", "desc") // Comentado temporalmente
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -154,12 +184,97 @@ export default function UnifiedOrdersPage() {
         id: doc.id,
         ...doc.data()
       }));
+      
+      // Ordenamos en el cliente como solución temporal
+      ordersData.sort((a, b) => {
+        const dateA = a.fechaCreacion?.toDate ? a.fechaCreacion.toDate() : new Date(a.fechaCreacion || 0);
+        const dateB = b.fechaCreacion?.toDate ? b.fechaCreacion.toDate() : new Date(b.fechaCreacion || 0);
+        return dateB - dateA; // desc
+      });
+      
       setOrders(ordersData);
       setLoading(false);
     });
 
     return () => unsubscribe();
-  }, [usuario.empresaId]);
+  }, [usuario]);
+
+  // DEBUG: Verificar mensajeros manualmente
+  const debugMensajeros = async () => {
+    if (!usuario?.empresaId) return;
+    
+    try {
+      console.log("🔍 DEBUG MANUAL - Verificando mensajeros...");
+      
+      // Query 1: Todos los usuarios
+      const allUsersQuery = query(collection(db, "usuarios"));
+      const allUsersSnap = await getDocs(allUsersQuery);
+      console.log("👥 Todos los usuarios:", allUsersSnap.docs.map(d => ({
+        id: d.id, 
+        empresaId: d.data().empresaId,
+        rol: d.data().rol,
+        nombre: d.data().nombre
+      })));
+      
+      // Query 2: Solo de esta empresa
+      const empresaUsersQuery = query(
+        collection(db, "usuarios"),
+        where("empresaId", "==", usuario.empresaId)
+      );
+      const empresaUsersSnap = await getDocs(empresaUsersQuery);
+      console.log("🏢 Usuarios de empresa-test-001:", empresaUsersSnap.docs.map(d => ({
+        id: d.id,
+        ...d.data()
+      })));
+      
+      // Query 3: Solo mensajeros de esta empresa
+      const mensajerosQuery = query(
+        collection(db, "usuarios"),
+        where("empresaId", "==", usuario.empresaId),
+        where("rol", "==", "mensajero")
+      );
+      const mensajerosSnap = await getDocs(mensajerosQuery);
+      console.log("📧 Mensajeros de empresa-test-001:", mensajerosSnap.docs.map(d => ({
+        id: d.id,
+        ...d.data()
+      })));
+      
+    } catch (error) {
+      console.error("❌ Error en debug:", error);
+    }
+  };
+
+  // Load mensajeros
+  useEffect(() => {
+    console.log("🔍 Cargando mensajeros para empresa:", usuario?.empresaId);
+    if (!usuario || !usuario.empresaId) {
+      return;
+    }
+    
+    // Ejecutar debug
+    debugMensajeros();
+
+    setLoadingMensajeros(true);
+    const q = query(
+      collection(db, "usuarios"),
+      where("empresaId", "==", usuario.empresaId),
+      where("rol", "==", "mensajero")
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const mensajerosData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      console.log("✅ Mensajeros encontrados:", mensajerosData);
+      console.log("📊 Total documentos en query:", snapshot.docs.length);
+      console.log("📋 Docs raw:", snapshot.docs.map(d => ({id: d.id, data: d.data()})));
+      setMensajeros(mensajerosData);
+      setLoadingMensajeros(false);
+    });
+
+    return () => unsubscribe();
+  }, [usuario]);
 
   // Add stop to advanced form
   const addStop = () => {
@@ -209,12 +324,18 @@ export default function UnifiedOrdersPage() {
       setError("");
       setSuccess("");
 
+      // User validation
+      if (!usuario || !usuario.empresaId || !usuario.uid) {
+        throw new Error("Usuario no válido. Por favor, inicia sesión nuevamente.");
+      }
+
       // Validation
       if (!basicForm.cliente.trim()) {
         throw new Error("El nombre del cliente es requerido");
       }
-      if (!basicForm.direccionTexto.trim()) {
-        throw new Error("La dirección es requerida");
+      // Validar que tenga dirección (texto) O coordenadas (del mapa)
+      if (!basicForm.direccionTexto.trim() && (!basicForm.addressLat || !basicForm.addressLng)) {
+        throw new Error("La dirección es requerida (puedes escribirla o seleccionarla en el mapa)");
       }
 
       const orderData = {
@@ -224,6 +345,15 @@ export default function UnifiedOrdersPage() {
         tipo: "basica",
         estado: "pendiente",
         fechaCreacion: serverTimestamp(),
+        // ✅ Agregar coordenadas en el formato correcto
+        destinoLat: basicForm.addressLat ? parseFloat(basicForm.addressLat) : null,
+        destinoLng: basicForm.addressLng ? parseFloat(basicForm.addressLng) : null,
+        direccionTexto: basicForm.direccionTexto,
+        address: {
+          lat: basicForm.addressLat ? parseFloat(basicForm.addressLat) : null,
+          lng: basicForm.addressLng ? parseFloat(basicForm.addressLng) : null,
+          formatted: basicForm.direccionTexto
+        },
         stops: [
           {
             id: 1,
@@ -269,6 +399,11 @@ export default function UnifiedOrdersPage() {
       setError("");
       setSuccess("");
 
+      // User validation
+      if (!usuario || !usuario.empresaId || !usuario.uid) {
+        throw new Error("Usuario no válido. Por favor, inicia sesión nuevamente.");
+      }
+
       // Validation
       if (!advancedForm.cliente.trim()) {
         throw new Error("El nombre del cliente es requerido");
@@ -277,18 +412,33 @@ export default function UnifiedOrdersPage() {
         throw new Error("Debe agregar al menos una parada");
       }
       
-      const hasEmptyStops = advancedForm.stops.some(stop => !stop.direccionTexto.trim());
+      // Validar que todas las paradas tengan dirección (texto) O coordenadas (del mapa)
+      const hasEmptyStops = advancedForm.stops.some(stop => 
+        !stop.direccionTexto.trim() && (!stop.addressLat || !stop.addressLng)
+      );
       if (hasEmptyStops) {
-        throw new Error("Todas las paradas deben tener una dirección");
+        throw new Error("Todas las paradas deben tener una dirección (puedes escribirla o seleccionarla en el mapa)");
       }
 
+      // ✅ Usar las coordenadas de la primera parada como destino principal
+      const firstStop = advancedForm.stops[0];
+      
       const orderData = {
         ...advancedForm,
         empresaId: usuario.empresaId,
         creadoPor: usuario.uid,
         tipo: "avanzada",
         estado: "pendiente",
-        fechaCreacion: serverTimestamp()
+        fechaCreacion: serverTimestamp(),
+        // ✅ Agregar coordenadas de la primera parada como destino principal
+        destinoLat: firstStop?.addressLat ? parseFloat(firstStop.addressLat) : null,
+        destinoLng: firstStop?.addressLng ? parseFloat(firstStop.addressLng) : null,
+        direccionTexto: firstStop?.direccionTexto || "",
+        address: {
+          lat: firstStop?.addressLat ? parseFloat(firstStop.addressLat) : null,
+          lng: firstStop?.addressLng ? parseFloat(firstStop.addressLng) : null,
+          formatted: firstStop?.direccionTexto || ""
+        }
       };
 
       await addDoc(collection(db, "ordenes"), orderData);
@@ -326,6 +476,96 @@ export default function UnifiedOrdersPage() {
       setSaving(false);
     }
   };
+
+  // Assign messenger to order
+  const assignMensajero = async (orderId, mensajeroId, mensajeroNombre) => {
+    try {
+      setError("");
+      setSuccess("");
+
+      console.log("Asignando mensajero:", { orderId, mensajeroId, mensajeroNombre });
+      console.log("Usuario actual:", usuario);
+      console.log("Rol del usuario:", usuario?.rol);
+      console.log("Empresa del usuario:", usuario?.empresaId);
+      
+      // Check the order data to see if it's a multi-stop order
+      const orderToAssign = orders.find(order => order.id === orderId);
+      console.log("Orden a asignar:", orderToAssign);
+      console.log("Tipo de orden:", orderToAssign?.tipo);
+      console.log("Tiene stops:", orderToAssign?.stops?.length);
+
+      // Validaciones previas
+      if (!orderId || !mensajeroId || !mensajeroNombre) {
+        setError("Datos incompletos para la asignación");
+        return;
+      }
+
+      if (!usuario || !usuario.empresaId) {
+        setError("Usuario no autenticado correctamente");
+        return;
+      }
+
+      const updateData = {
+        mensajeroId: mensajeroId,
+        mensajeroNombre: mensajeroNombre,
+        estado: "asignada",
+        fechaAsignacion: serverTimestamp()
+      };
+
+      console.log("Datos de actualización:", updateData);
+      console.log("Intentando actualizar documento con ID:", orderId);
+
+      // Try to read the document first to see if it exists and has the right permissions
+      try {
+        const docRef = doc(db, "ordenes", orderId);
+        console.log("Referencia del documento:", docRef);
+        await updateDoc(docRef, updateData);
+      } catch (updateError) {
+        console.error("Error específico en updateDoc:", updateError);
+        throw updateError;
+      }
+
+      const accion = assigningOrder.mensajeroId ? 'cambiada' : 'asignada';
+      setSuccess(`Orden ${accion} exitosamente a ${mensajeroNombre}`);
+      setShowAssignModal(false);
+      setAssigningOrder(null);
+
+    } catch (err) {
+      console.error("Error completo:", err);
+      console.error("Código de error:", err.code);
+      console.error("Mensaje de error:", err.message);
+      setError(`Error al asignar mensajero: ${err.message}`);
+    }
+  };
+
+  // Open assign modal
+  const openAssignModal = (order) => {
+    setAssigningOrder(order);
+    // Si la orden ya tiene un mensajero asignado, preseleccionarlo
+    setSelectedMensajero(order.mensajeroId || "");
+    setShowAssignModal(true);
+  };
+
+  // Close assign modal
+  const closeAssignModal = () => {
+    setShowAssignModal(false);
+    setAssigningOrder(null);
+    setSelectedMensajero("");
+  };
+
+  // DESPUÉS de declarar todos los hooks, hacer las validaciones condicionales
+  if (userLoading) {
+    return (
+      <div style={{ padding: "20px", textAlign: "center" }}>
+        <p>Verificando usuario...</p>
+      </div>
+    );
+  }
+
+  if (!usuario) {
+    navigate("/login");
+    return null;
+  }
 
   return (
     <div className="unified-orders-container">
@@ -443,9 +683,10 @@ export default function UnifiedOrdersPage() {
                 lng: basicForm.addressLng
               }}
               onChange={(address) => {
+                console.log("🔧 DEBUG - Address received:", address);
                 setBasicForm(prev => ({
                   ...prev,
-                  direccionTexto: address.texto || "",
+                  direccionTexto: address.texto || address.formatted || "",
                   addressLat: address.lat || "",
                   addressLng: address.lng || ""
                 }));
@@ -728,6 +969,41 @@ export default function UnifiedOrdersPage() {
                     <div className={`order-status status-${order.estado || "pending"}`}>
                       {order.estado || "Pendiente"}
                     </div>
+                    {order.estado !== "entregada" && (
+                      <>
+                        {!order.mensajeroId ? (
+                          <button 
+                            onClick={() => openAssignModal(order)}
+                            style={{
+                              background: "#3B82F6",
+                              color: "white",
+                              border: "none",
+                              padding: "4px 8px",
+                              borderRadius: "4px",
+                              fontSize: "12px",
+                              cursor: "pointer"
+                            }}
+                          >
+                            Asignar
+                          </button>
+                        ) : (
+                          <button 
+                            onClick={() => openAssignModal(order)}
+                            style={{
+                              background: "#F59E0B",
+                              color: "white",
+                              border: "none",
+                              padding: "4px 8px",
+                              borderRadius: "4px",
+                              fontSize: "12px",
+                              cursor: "pointer"
+                            }}
+                          >
+                            Cambiar
+                          </button>
+                        )}
+                      </>
+                    )}
                   </div>
                   
                   <div style={{ fontSize: "14px", color: "#374151", marginBottom: "8px" }}>
@@ -735,6 +1011,20 @@ export default function UnifiedOrdersPage() {
                     <strong> Tipo:</strong> {order.tipo || "básica"} • 
                     <strong> Fecha:</strong> {order.fecha}
                   </div>
+
+                  {order.mensajeroNombre && (
+                    <div style={{ 
+                      fontSize: "12px", 
+                      color: "#059669", 
+                      background: "#D1FAE5", 
+                      padding: "4px 8px", 
+                      borderRadius: "4px", 
+                      marginBottom: "8px",
+                      display: "inline-block"
+                    }}>
+                      👤 Asignado a: {order.mensajeroNombre}
+                    </div>
+                  )}
 
                   {order.stops && order.stops.length > 0 && (
                     <div className="stops-summary">
@@ -751,6 +1041,98 @@ export default function UnifiedOrdersPage() {
           )}
         </div>
       )}
+
+      {/* Messenger Assignment Modal */}
+      {showAssignModal && assigningOrder && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: "rgba(0,0,0,0.5)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 1000
+        }}>
+          <div style={{
+            backgroundColor: "white",
+            padding: "24px",
+            borderRadius: "8px",
+            minWidth: "400px",
+            maxWidth: "500px"
+          }}>
+            <h3 style={{ marginTop: 0 }}>
+              {assigningOrder.mensajeroId ? 'Cambiar Mensajero' : 'Asignar Mensajero'}
+            </h3>
+            <p>Orden: #{assigningOrder.id} - {assigningOrder.cliente}</p>
+            {assigningOrder.mensajeroNombre && (
+              <p style={{ color: '#059669', fontSize: '14px' }}>
+                <strong>Mensajero actual:</strong> {assigningOrder.mensajeroNombre}
+              </p>
+            )}
+            
+            <div style={{ marginBottom: "16px" }}>
+              <label style={{ display: "block", marginBottom: "8px" }}>
+                Seleccionar Mensajero:
+              </label>
+              <select 
+                value={selectedMensajero}
+                onChange={(e) => setSelectedMensajero(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "8px",
+                  border: "1px solid #ccc",
+                  borderRadius: "4px"
+                }}
+              >
+                <option value="">Seleccionar mensajero...</option>
+                {mensajeros.map(mensajero => (
+                  <option key={mensajero.id} value={mensajero.id}>
+                    {mensajero.nombre} - {mensajero.email}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+              <button
+                onClick={closeAssignModal}
+                style={{
+                  padding: "8px 16px",
+                  border: "1px solid #ccc",
+                  borderRadius: "4px",
+                  background: "white",
+                  cursor: "pointer"
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  const selectedMensajeroData = mensajeros.find(m => m.id === selectedMensajero);
+                  if (selectedMensajeroData) {
+                    assignMensajero(assigningOrder.id, selectedMensajero, selectedMensajeroData.nombre);
+                  }
+                }}
+                disabled={!selectedMensajero}
+                style={{
+                  padding: "8px 16px",
+                  border: "none",
+                  borderRadius: "4px",
+                  background: selectedMensajero ? "#3B82F6" : "#ccc",
+                  color: "white",
+                  cursor: selectedMensajero ? "pointer" : "not-allowed"
+                }}
+              >
+                {assigningOrder.mensajeroId ? 'Cambiar' : 'Asignar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

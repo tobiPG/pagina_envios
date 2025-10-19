@@ -189,7 +189,7 @@ export default function PlanSeleccion() {
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <Link className="btn" to={isAdmin ? "/dashboard" : "/ordenes"}>&larr; Volver</Link>
-          {isAdmin && <button className="btn" onClick={ensureCatalog}>Asegurar catálogo</button>}
+          <button className="btn" onClick={ensureCatalog}>Asegurar catálogo</button>
         </div>
       </div>
 
@@ -275,7 +275,7 @@ export default function PlanSeleccion() {
             })}
             {!planes.length && (
               <div className="card">
-                No hay planes en catálogo. {isAdmin && <>Haz clic en <b>Asegurar catálogo</b> arriba.</>}
+                No hay planes en catálogo. Haz clic en <b>Asegurar catálogo</b> arriba.
               </div>
             )}
           </div>

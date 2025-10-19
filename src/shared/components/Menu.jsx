@@ -145,7 +145,7 @@ export default function Menu() {
               {/* OPERADOR */}
               {rol === "operador" && (
                 <>
-                  <Item to="/ordenes" exact={false} activePrefixes={["/orden/", "/orden/nueva", "/seleccionar-destino/"]}>📦 Órdenes de Entrega</Item>
+                  <Item to="/ordenes" exact={false} activePrefixes={["/orden/", "/orden/nueva", "/seleccionar-destino/"]}>📦 Gestión de Órdenes</Item>
                   <Item to="/programas">🚚 Programar Entregas</Item>
                   <Item to="/seguimiento-rutas" exact={false} activePrefixes={["/seguimiento"]}>🚦 Seguimiento de Rutas</Item>
                   <Item to="/alertas-sla" exact={false} activePrefixes={["/alertas"]}>📣 Alertas SLA</Item>
@@ -166,7 +166,7 @@ export default function Menu() {
               {rol === "administrador" && (
                 <>
                   <Item to="/estadisticas">📊 Estadísticas</Item>
-                  <Item to="/ordenes" exact={false} activePrefixes={["/orden/", "/orden/nueva", "/seleccionar-destino/"]}>📦 Órdenes de Entrega</Item>
+                  <Item to="/ordenes" exact={false} activePrefixes={["/orden/", "/orden/nueva", "/seleccionar-destino/"]}>📦 Gestión de Órdenes</Item>
                   <Item to="/programas">🚚 Programar Entregas</Item>
                   <Item to="/seguimiento-rutas" exact={false} activePrefixes={["/seguimiento"]}>🚦 Seguimiento de Rutas</Item>
                   <Item to="/alertas-sla" exact={false} activePrefixes={["/alertas"]}>📣 Alertas SLA</Item>
@@ -204,7 +204,7 @@ export default function Menu() {
 
         {isAdminOrOp && (
           <Link
-            to={nuevaOrdenBloqueada ? "/planes" : "/orden/nueva"}
+            to={nuevaOrdenBloqueada ? "/planes" : "/ordenes"}
             onClick={(e) => {
               if (nuevaOrdenBloqueada) {
                 e.preventDefault();

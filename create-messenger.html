@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Crear Mensajero Test</title>
+    <script type="module">
+        // Import Firebase
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js';
+        import { getAuth, createUserWithEmailAndPassword } from 'https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js';
+        import { getFirestore, doc, setDoc } from 'https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js';
+
+        // No vamos a crear auth user, solo el documento en Firestore
+        // Usaremos un UID fijo para poder hacer login después
+        
+        async function createMensajero() {
+            try {
+                console.log("Creando documento de mensajero...");
+                
+                // Usar el UID que ya tenías: XMNgglAfi7NSuDRSpJy3JcsFpGJ3
+                const mensajeroUID = "XMNgglAfi7NSuDRSpJy3JcsFpGJ3";
+                
+                // Crear el documento directamente
+                const userData = {
+                    uid: mensajeroUID,
+                    id: mensajeroUID, // También agregar como id por si acaso
+                    email: "mensajero@test.com",
+                    nombre: "Mensajero Test", 
+                    rol: "mensajero",
+                    empresaId: "empresa-test-001",
+                    activo: true,
+                    createdAt: new Date(),
+                    updatedAt: new Date()
+                };
+
+                // Simular que se guardó (ya que no podemos acceder a Firebase desde aquí)
+                console.log("Datos del mensajero que debes crear:", userData);
+                
+                document.getElementById("result").innerHTML = `
+                    <h3 style="color: green;">📋 Datos del mensajero para crear manualmente</h3>
+                    <p><strong>UID:</strong> ${mensajeroUID}</p>
+                    <p><strong>Email:</strong> mensajero@test.com</p>
+                    <p><strong>Nombre:</strong> Mensajero Test</p>
+                    <p><strong>Rol:</strong> mensajero</p>
+                    <p><strong>EmpresaId:</strong> empresa-test-001</p>
+                    <p>Ve a tu aplicación como administrador y crea este usuario en el equipo, o usa la consola de Firebase.</p>
+                `;
+                
+            } catch (error) {
+                console.error("Error:", error);
+                document.getElementById("result").innerHTML = `
+                    <h3 style="color: red;">❌ Error</h3>
+                    <p>${error.message}</p>
+                `;
+            }
+        }
+
+        // Make function global
+        window.createMensajero = createMensajero;
+    </script>
+</head>
+<body>
+    <h1>Crear Mensajero Test</h1>
+    <button onclick="createMensajero()" style="padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer;">
+        Crear Mensajero
+    </button>
+    <div id="result" style="margin-top: 20px; padding: 10px; border: 1px solid #ddd; border-radius: 5px;"></div>
+</body>
+</html>

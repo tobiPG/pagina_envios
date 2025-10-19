@@ -5,6 +5,11 @@ import { useEffect, useState, useMemo } from "react";
 // Shared components
 import Menu from "../../shared/components/Menu";
 
+// Temporary component for seeding database
+import SeedDatabase from "../../components/SeedDatabase";
+import CreateMessenger from "../../components/CreateMessenger";
+import AddCoordinates from "../../components/AddCoordinates";
+
 // Feature imports - Auth
 import {
   LoginPage,
@@ -30,7 +35,8 @@ import {
   OrdersListPage,
   OrderFormPage,
   OrderDetailsPage,
-  OrderHistoryPage
+  OrderHistoryPage,
+  UnifiedOrdersPage
 } from "../../features/orders";
 
 // Feature imports - Deliveries
@@ -46,7 +52,8 @@ import {
   CourierMapPage,
   RouteTrackingPage,
   SelectDestinationPage,
-  ETAPage
+  ETAPage,
+  MultiStopCourierMapPage
 } from "../../features/routes";
 
 // Feature imports - Users
@@ -145,7 +152,12 @@ function Rutas() {
       {mostrarMenu && <Menu />}
 
       <Routes>
-        {/* 🏠 Home público: Landing con vista previa + CTAs */}
+        {/* � Temporary route for seeding database */}
+        <Route path="/seed-database" element={<SeedDatabase />} />
+        <Route path="/create-messenger" element={<CreateMessenger />} />
+        <Route path="/add-coordinates" element={<AddCoordinates />} />
+        
+        {/* �🏠 Home público: Landing con vista previa + CTAs */}
         <Route
           path="/"
           element={
@@ -177,17 +189,18 @@ function Rutas() {
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/estadisticas" element={<AdminStatsPage />} />
             <Route path="/estadisticas-operador" element={<OperatorStatsPage />} />
-            <Route path="/ordenes" element={<OrdersListPage />} />
+            <Route path="/ordenes" element={<UnifiedOrdersPage />} />
 
             {/* Detalle / Mapa / Selección */}
             <Route path="/orden/:id" element={<OrderDetailsPage />} />
             <Route path="/mapa/:id" element={<CourierMapPage />} />
+            <Route path="/mapa-multi-stop/:id" element={<MultiStopCourierMapPage />} />
             <Route path="/mapa-mensajeros" element={<CourierMapPage />} />
             <Route path="/seleccionar-destino/:id" element={<SelectDestinationPage />} />
 
-            {/* Crear / Editar orden */}
-            <Route path="/orden/nueva" element={<OrderFormPage />} />
-            <Route path="/orden/:id/editar" element={<OrderFormPage />} />
+            {/* Crear / Editar orden - DEPRECATED, now handled in UnifiedOrdersPage */}
+            {/* <Route path="/orden/nueva" element={<OrderFormPage />} />
+            <Route path="/orden/:id/editar" element={<OrderFormPage />} /> */}
 
             <Route path="/historial" element={<OrderHistoryPage />} />
             <Route path="/reportes" element={<ReportsPage />} />
@@ -217,15 +230,16 @@ function Rutas() {
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/estadisticas" element={<AdminStatsPage />} />
             <Route path="/estadisticas-operador" element={<OperatorStatsPage />} />
-            <Route path="/ordenes" element={<OrdersListPage />} />
+            <Route path="/ordenes" element={<UnifiedOrdersPage />} />
 
             {/* Detalle / Mapas / Selección (solo ver) */}
             <Route path="/orden/:id" element={<OrderDetailsPage />} />
             <Route path="/mapa/:id" element={<CourierMapPage />} />
+            <Route path="/mapa-multi-stop/:id" element={<MultiStopCourierMapPage />} />
             <Route path="/mapa-mensajeros" element={<CourierMapPage />} />
             <Route path="/seleccionar-destino/:id" element={<SelectDestinationPage />} />
 
-            {/* ❌ No incluimos crear/editar orden ni programar */}
+            {/* ❌ No incluimos crear/editar orden ni programar - handled in UnifiedOrdersPage now */}
             {/* <Route path="/orden/nueva" element={<OrderFormPage />} /> */}
             {/* <Route path="/orden/:id/editar" element={<OrderFormPage />} /> */}
             {/* <Route path="/programas" element={<ScheduleDeliveriesPage />} /> */}
@@ -254,17 +268,18 @@ function Rutas() {
         {usuario && rol === "operador" && (
           <>
             <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/ordenes" element={<OrdersListPage />} />
+            <Route path="/ordenes" element={<UnifiedOrdersPage />} />
 
             {/* Detalle / Mapa / Selección */}
             <Route path="/orden/:id" element={<OrderDetailsPage />} />
             <Route path="/mapa/:id" element={<CourierMapPage />} />
+            <Route path="/mapa-multi-stop/:id" element={<MultiStopCourierMapPage />} />
             <Route path="/ruta-mensajero/:id" element={<CourierRoutePage />} />
             <Route path="/seleccionar-destino/:id" element={<SelectDestinationPage />} />
 
-            {/* Crear / Editar orden */}
-            <Route path="/orden/nueva" element={<OrderFormPage />} />
-            <Route path="/orden/:id/editar" element={<OrderFormPage />} />
+            {/* Crear / Editar orden - now handled in UnifiedOrdersPage */}
+            {/* <Route path="/orden/nueva" element={<OrderFormPage />} />
+            <Route path="/orden/:id/editar" element={<OrderFormPage />} /> */}
 
             <Route path="/reportes" element={<ReportsPage />} />
             <Route path="/programas" element={<ScheduleDeliveriesPage />} />
@@ -285,6 +300,8 @@ function Rutas() {
           <>
             <Route path="/entregas" element={<DeliveriesPage />} />
             <Route path="/orden/:id" element={<OrderDetailsPage />} />
+            <Route path="/mapa/:id" element={<CourierMapPage />} />
+            <Route path="/mapa-multi-stop/:id" element={<MultiStopCourierMapPage />} />
             <Route path="/seleccionar-destino/:id" element={<SelectDestinationPage />} />
             <Route path="/ruta-mensajero/:id" element={<CourierRoutePage />} />
             <Route path="*" element={<Navigate to="/entregas" replace />} />

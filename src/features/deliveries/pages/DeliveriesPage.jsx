@@ -13,6 +13,7 @@ import {
   setDoc,
   getDoc,
   orderBy,
+  getDocs,
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import PingUbicacion from "../../../shared/components/PingUbicacion.jsx";
@@ -43,6 +44,8 @@ function todayYMD(d = new Date()) {
 }
 
 export default function Entregas() {
+  console.log("🚀 ENTREGAS - Componente iniciado");
+  
   const navigate = useNavigate();
   const [ordenes, setOrdenes] = useState([]);
   const [error, setError] = useState("");
@@ -77,6 +80,79 @@ export default function Entregas() {
     usuario?.usuario ||
     "mensajero-desconocido";
   const mensajeroNombre = usuario?.nombre || usuario?.usuario || "Mensajero";
+
+  // Debug logs
+  console.log("🔍 DEBUG DeliveriesPage:");
+  console.log("Usuario completo:", usuario);
+  console.log("EmpresaId:", empresaId);
+  console.log("MensajeroId:", mensajeroId);
+  console.log("MensajeroNombre:", mensajeroNombre);
+  console.log("Rol:", rol);
+  
+  // Debug simple: mostrar las órdenes cuando cambien
+  console.log("📦 Total órdenes cargadas:", ordenes.length);
+  if (ordenes.length > 0) {
+    ordenes.forEach((orden, i) => {
+      console.log(`📋 Orden ${i + 1}:`, {
+        id: orden.id,
+        cliente: orden.cliente,
+        destinoLat: orden.destinoLat,
+        destinoLng: orden.destinoLng,
+        address: orden.address,
+        destino: orden.destino
+      });
+    });
+  }
+
+  // Consulta manual para debug
+  const debugQuery = async () => {
+    try {
+      console.log("🔍 MANUAL DEBUG - Buscando órdenes...");
+      const q1 = query(
+        collection(db, "ordenes"),
+        where("empresaId", "==", empresaId),
+        where("mensajeroId", "==", mensajeroId)
+      );
+      
+      const q1WithFilter = query(
+        collection(db, "ordenes"),
+        where("empresaId", "==", empresaId),
+        where("mensajeroId", "==", mensajeroId),
+        where("entregado", "==", false)
+      );
+      
+      const snapshot1 = await getDocs(q1);
+      console.log("📋 MANUAL - Órdenes con mensajeroId:", snapshot1.docs.map(d => ({
+        id: d.id, 
+        estado: d.data().estado,
+        entregado: d.data().entregado,
+        mensajeroId: d.data().mensajeroId
+      })));
+      
+      const snapshot1WithFilter = await getDocs(q1WithFilter);
+      console.log("📋 MANUAL - Órdenes con filtro entregado==false:", snapshot1WithFilter.docs.map(d => ({
+        id: d.id, 
+        estado: d.data().estado,
+        entregado: d.data().entregado,
+        mensajeroId: d.data().mensajeroId
+      })));
+
+      const q2 = query(
+        collection(db, "ordenes"),  
+        where("empresaId", "==", empresaId)
+      );
+      
+      const snapshot2 = await getDocs(q2);
+      console.log("📋 MANUAL - Todas las órdenes de la empresa:", snapshot2.docs.map(d => ({id: d.id, mensajeroId: d.data().mensajeroId, mensajeroNombre: d.data().mensajeroNombre})));
+      
+    } catch (error) {
+      console.error("❌ Error en debug manual:", error);
+    }
+  };
+  
+  if (empresaId && mensajeroId && mensajeroId !== "mensajero-desconocido") {
+    debugQuery();
+  }
 
   // Helpers coords
   const toNumOrNull = (v) => {
@@ -158,7 +234,7 @@ export default function Entregas() {
     const q1 = query(
       col,
       where("empresaId", "==", empresaId),
-      where("mensajeroUid", "==", mensajeroId),
+      where("mensajeroId", "==", mensajeroId),
       where("fecha", "==", hoy),
       orderBy("createdAt", "desc")
     );
@@ -195,6 +271,14 @@ export default function Entregas() {
       usuario?.id || usuario?.uid || usuario?.userId || usuario?.usuarioId || null;
     const nombre = usuario?.nombre || null;
 
+    console.log("🔍 Órdenes Effect - Datos extraídos:", {
+      empresaId,
+      uid,
+      nombre,
+      rol,
+      isAdmin: isAdminRole(rol)
+    });
+
     const sortByCreatedDesc = (rows) => {
       rows.sort((a, b) => (b?.createdAt?.toMillis?.() ?? 0) - (a?.createdAt?.toMillis?.() ?? 0));
       return rows;
@@ -203,10 +287,15 @@ export default function Entregas() {
     let cleanup = () => {};
 
     if (isAdminRole(rol)) {
+      console.log("🔍 Ejecutando query ADMIN:", { empresaId });
       const qAdmin = query(refCol, where("empresaId", "==", empresaId));
       const unsub = onSnapshot(
         qAdmin,
-        (snap) => setOrdenes(sortByCreatedDesc(snap.docs.map((d) => ({ id: d.id, ...d.data() })))),
+        (snap) => {
+          const ordenes = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          console.log("✅ Órdenes encontradas (ADMIN):", ordenes);
+          setOrdenes(sortByCreatedDesc(ordenes));
+        },
         (err) => setError(err?.message || "No se pudieron leer órdenes.")
       );
       cleanup = () => unsub();
@@ -218,8 +307,8 @@ export default function Entregas() {
       const qName = query(
         refCol,
         where("empresaId", "==", empresaId),
-        where("asignadoNombre", "==", nombre),
-        where("entregado", "==", false)
+        where("mensajeroNombre", "==", nombre),
+        where("estado", "in", ["asignada", "en-ruta"])
       );
       const un2 = onSnapshot(
         qName,
@@ -234,18 +323,37 @@ export default function Entregas() {
     };
 
     if (uid) {
+      console.log("🔍 Ejecutando query por UID:", { empresaId, mensajeroId: uid });
       const qUid = query(
         refCol,
         where("empresaId", "==", empresaId),
-        where("asignadoUid", "==", uid),
-        where("entregado", "==", false)
+        where("mensajeroId", "==", uid),
+        where("estado", "in", ["asignada", "en-ruta"])
       );
 
       const un1 = onSnapshot(
         qUid,
-        (snap) => setOrdenes(sortByCreatedDesc(snap.docs.map((d) => ({ id: d.id, ...d.data() })))),
+        (snap) => {
+          const ordenes = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          console.log("✅ Órdenes encontradas por UID:", ordenes);
+          
+          // Debug: Ver estructura completa de la primera orden
+          if (ordenes.length > 0) {
+            console.log("🔍 Estructura de la primera orden:", ordenes[0]);
+            console.log("📍 Coordenadas disponibles:", {
+              destinoLat: ordenes[0].destinoLat,
+              destinoLng: ordenes[0].destinoLng,
+              'address.lat': ordenes[0].address?.lat,
+              'address.lng': ordenes[0].address?.lng,
+              'destino.lat': ordenes[0].destino?.lat,
+              'destino.lng': ordenes[0].destino?.lng
+            });
+          }
+          
+          setOrdenes(sortByCreatedDesc(ordenes));
+        },
         (err) => {
-          console.warn("Query por UID falló o requiere índice. Activando fallback por nombre.", err?.message);
+          console.warn("❌ Query por UID falló o requiere índice. Activando fallback por nombre.", err?.message);
           attachByName();
         }
       );
@@ -255,15 +363,20 @@ export default function Entregas() {
     }
 
     if (nombre) {
+      console.log("🔍 Ejecutando query por nombre:", { empresaId, mensajeroNombre: nombre });
       const qName = query(
         refCol,
         where("empresaId", "==", empresaId),
-        where("asignadoNombre", "==", nombre),
-        where("entregado", "==", false)
+        where("mensajeroNombre", "==", nombre),
+        where("estado", "in", ["asignada", "en-ruta"])
       );
       const un = onSnapshot(
         qName,
-        (snap) => setOrdenes(sortByCreatedDesc(snap.docs.map((d) => ({ id: d.id, ...d.data() })))),
+        (snap) => {
+          const ordenes = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          console.log("✅ Órdenes encontradas por nombre:", ordenes);
+          setOrdenes(sortByCreatedDesc(ordenes));
+        },
         (err) => setError(err?.message || "No se pudieron leer órdenes.")
       );
       cleanup = () => un();
@@ -362,7 +475,7 @@ export default function Entregas() {
             direccion: orden.direccionTexto || orden.address?.formatted || "",
             cliente: orden.cliente || "",
             numeroFactura: orden.numeroFactura || "",
-            asignadoUid: orden.asignadoUid || null,
+            asignadoUid: orden.mensajeroId || null,
             address: orden.address || null,
           },
         });
@@ -424,9 +537,9 @@ export default function Entregas() {
       await updateDoc(doc(db, "ordenes", orderId), patch);
 
       // 4) Mensajero a disponible
-      if (orden.asignadoUid) {
+      if (orden.mensajeroId) {
         await setDoc(
-          doc(db, "ubicacionesMensajeros", orden.asignadoUid),
+          doc(db, "ubicacionesMensajeros", orden.mensajeroId),
           {
             empresaId,
             nombre: mensajeroNombre,
@@ -569,8 +682,12 @@ export default function Entregas() {
               {/* Acciones básicas */}
               <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button
-                  onClick={() =>
-                    navigate(`/mapa/${orderId}`, {
+                  onClick={() => {
+                    // ✅ Detectar si es orden multi-stop y usar la ruta correcta
+                    const isMultiStop = o.tipo === "avanzada" && o.stops && o.stops.length > 1;
+                    const mapRoute = isMultiStop ? `/mapa-multi-stop/${orderId}` : `/mapa/${orderId}`;
+                    
+                    navigate(mapRoute, {
                       state: {
                         ordenId: orderId,
                         lat,
@@ -578,21 +695,31 @@ export default function Entregas() {
                         direccion: o.direccionTexto || o.address?.formatted || "",
                         cliente: o.cliente || "",
                         numeroFactura: o.numeroFactura || "",
-                        asignadoUid: o.asignadoUid || null,
+                        asignadoUid: o.mensajeroId || null,
                         address: o.address || null,
                       },
-                    })
-                  }
+                    });
+                  }}
                 >
                   🗺️ Ver en mapa
                 </button>
 
                 <button
-                  onClick={() =>
+                  onClick={() => {
+                    // ✅ Siempre usar ruta-mensajero, pero pasar info de multi-stop
+                    const isMultiStop = o.tipo === "avanzada" && o.stops && o.stops.length > 1;
+                    
                     navigate(`/ruta-mensajero/${orderId}`, {
-                      state: { ordenId: orderId, lat, lng, direccion: o.direccionTexto || o.address?.formatted || "" },
-                    })
-                  }
+                      state: { 
+                        ordenId: orderId, 
+                        lat, 
+                        lng, 
+                        direccion: o.direccionTexto || o.address?.formatted || "",
+                        isMultiStop: isMultiStop,
+                        stops: o.stops || []
+                      },
+                    });
+                  }}
                 >
                   🧭 Navegar (en app)
                 </button>

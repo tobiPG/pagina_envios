@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { parseAddressFromText } from "../lib/parseAddress";
 import { geocodeText, reverseGeocode } from "../lib/geoProvider/nominatim";
 import { MapContainer, TileLayer, Marker, useMapEvents } from "react-leaflet";
@@ -23,16 +23,112 @@ function AddressInput({ value, onChange }) {
   const [mapLatLng, setMapLatLng] = useState(null);
   const [importStr, setImportStr] = useState("");
 
+  // Sincronizar estado interno con valor externo
+  useEffect(() => {
+    if (value) {
+      if (value.texto || value.formatted) {
+        setText(value.texto || value.formatted || "");
+      }
+      if (value.lat && value.lng) {
+        setMapLatLng({
+          lat: parseFloat(value.lat),
+          lng: parseFloat(value.lng)
+        });
+      }
+    }
+  }, [value]);
+
   async function handleGeocode() {
     if (!text.trim()) return;
-    const hit = await geocodeText(text.trim());
-    if (hit) onChange(hit);
+    try {
+      const hit = await geocodeText(text.trim());
+      console.log("🔍 DEBUG - Geocode result:", hit);
+      if (hit && hit.display_name) {
+        // Normalizar la respuesta del servicio
+        const normalizedData = {
+          lat: hit.lat,
+          lng: hit.lng,
+          texto: hit.display_name,
+          formatted: hit.display_name,
+          provider: "nominatim",
+          source: "TEXT_INPUT"
+        };
+        console.log("✅ DEBUG - Sending normalized geocode result:", normalizedData);
+        onChange(normalizedData);
+      } else {
+        // Si no se puede geocodificar, al menos guardar el texto
+        const fallbackData = {
+          texto: text.trim(),
+          formatted: text.trim(),
+          lat: "",
+          lng: "",
+          provider: "manual",
+          source: "TEXT_INPUT"
+        };
+        console.log("📝 DEBUG - Sending text fallback:", fallbackData);
+        onChange(fallbackData);
+      }
+    } catch (error) {
+      console.error("❌ DEBUG - Error in geocoding:", error);
+      // En caso de error, guardar al menos el texto
+      const errorFallbackData = {
+        texto: text.trim(),
+        formatted: text.trim(),
+        lat: "",
+        lng: "",
+        provider: "manual",
+        source: "TEXT_INPUT"
+      };
+      console.log("🔧 DEBUG - Sending text error fallback:", errorFallbackData);
+      onChange(errorFallbackData);
+    }
   }
 
   async function handleMapPick(lat, lng) {
+    console.log("🗺️ DEBUG - Map clicked:", { lat, lng });
     setMapLatLng({ lat, lng });
-    const rev = await reverseGeocode(lat, lng);
-    if (rev) onChange(rev);
+    try {
+      const rev = await reverseGeocode(lat, lng);
+      console.log("🌍 DEBUG - Reverse geocode result:", rev);
+      if (rev && rev.display_name) {
+        // Normalizar la respuesta del servicio
+        const normalizedData = {
+          lat: lat,
+          lng: lng,
+          texto: rev.display_name,
+          formatted: rev.display_name,
+          provider: "nominatim",
+          source: "MAP_CLICK"
+        };
+        console.log("✅ DEBUG - Sending normalized reverse geocode result:", normalizedData);
+        onChange(normalizedData);
+      } else {
+        // Si el reverse geocoding falla, al menos enviar las coordenadas
+        const fallbackData = {
+          lat: lat,
+          lng: lng,
+          texto: `Lat: ${lat.toFixed(6)}, Lng: ${lng.toFixed(6)}`,
+          formatted: `Coordenadas: ${lat.toFixed(6)}, ${lng.toFixed(6)}`,
+          provider: "manual",
+          source: "MAP_CLICK"
+        };
+        console.log("📍 DEBUG - Sending fallback data:", fallbackData);
+        onChange(fallbackData);
+      }
+    } catch (error) {
+      console.error("❌ DEBUG - Error in reverse geocoding:", error);
+      // En caso de error, enviar al menos las coordenadas
+      const errorFallbackData = {
+        lat: lat,
+        lng: lng,
+        texto: `Lat: ${lat.toFixed(6)}, Lng: ${lng.toFixed(6)}`,
+        formatted: `Coordenadas: ${lat.toFixed(6)}, ${lng.toFixed(6)}`,
+        provider: "manual",
+        source: "MAP_CLICK"
+      };
+      console.log("🔧 DEBUG - Sending error fallback data:", errorFallbackData);
+      onChange(errorFallbackData);
+    }
   }
 
   async function handleImport() {
@@ -75,6 +171,18 @@ function AddressInput({ value, onChange }) {
             {mapLatLng && <Marker position={[mapLatLng.lat, mapLatLng.lng]} icon={icon} />}
           </MapContainer>
           <small>Haz clic en el mapa para fijar la ubicación.</small>
+          {mapLatLng && (
+            <div style={{ 
+              marginTop: 8, 
+              padding: 8, 
+              background: "#e8f5e8", 
+              border: "1px solid #4caf50", 
+              borderRadius: 4,
+              fontSize: "12px"
+            }}>
+              ✅ Ubicación seleccionada: {mapLatLng.lat.toFixed(6)}, {mapLatLng.lng.toFixed(6)}
+            </div>
+          )}
         </div>
       )}
 
@@ -92,9 +200,13 @@ function AddressInput({ value, onChange }) {
 
       {value && (
         <div style={{ marginTop:8, padding:8, border:"1px solid #ddd", borderRadius:6 }}>
-          <div><b>Dirección:</b> {value.formatted}</div>
-          <div><b>Coords:</b> {value.lat?.toFixed(6)}, {value.lng?.toFixed(6)}</div>
-          <div><b>Proveedor:</b> {value.provider} / <b>Origen:</b> {value.source}</div>
+          <div><b>Dirección:</b> {value.formatted || value.texto || ''}</div>
+          <div><b>Coords:</b> {
+            value.lat && value.lng 
+              ? `${parseFloat(value.lat).toFixed(6)}, ${parseFloat(value.lng).toFixed(6)}`
+              : 'No disponibles'
+          }</div>
+          <div><b>Proveedor:</b> {value.provider || 'N/A'} / <b>Origen:</b> {value.source || 'N/A'}</div>
         </div>
       )}
     </div>

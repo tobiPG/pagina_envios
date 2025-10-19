@@ -1,0 +1,73 @@
+{
+  "__collections__": {
+    "planesCatalogo": {
+      "plan-basico": {
+        "nombre": "Plan Básico",
+        "descripcion": "Plan básico para pequeñas empresas",
+        "precio": 29.99,
+        "limiteOrdenes": 100,
+        "limiteMensajeros": 5,
+        "caracteristicas": ["Gestión básica de órdenes", "Tracking básico", "Soporte por email"],
+        "activo": true
+      },
+      "plan-profesional": {
+        "nombre": "Plan Profesional", 
+        "descripcion": "Plan profesional para empresas medianas",
+        "precio": 59.99,
+        "limiteOrdenes": 500,
+        "limiteMensajeros": 20,
+        "caracteristicas": ["Gestión avanzada de órdenes", "Tracking en tiempo real", "Soporte prioritario", "Multi-stop"],
+        "activo": true
+      },
+      "plan-empresarial": {
+        "nombre": "Plan Empresarial",
+        "descripcion": "Plan empresarial para grandes organizaciones",
+        "precio": 99.99,
+        "limiteOrdenes": -1,
+        "limiteMensajeros": -1,
+        "caracteristicas": ["Gestión completa", "API access", "Soporte 24/7", "Multi-stop", "Analytics avanzados"], 
+        "activo": true
+      }
+    },
+    "empresas": {
+      "empresa-test-001": {
+        "nombre": "Empresa Test",
+        "direccion": "Calle Principal 123", 
+        "telefono": "+1234567890",
+        "email": "admin@test.com",
+        "planActual": "Plan Profesional",
+        "fechaCreacion": "2025-10-19T00:00:00Z",
+        "activa": true
+      }
+    },
+    "usuarios": {
+      "admin-uid-001": {
+        "nombre": "Admin",
+        "apellido": "Test",
+        "email": "admin@test.com", 
+        "rol": "administrador",
+        "empresaId": "empresa-test-001",
+        "activo": true,
+        "fechaCreacion": "2025-10-19T00:00:00Z"
+      },
+      "operator-uid-001": {
+        "nombre": "Operador",
+        "apellido": "Test",
+        "email": "operador@test.com",
+        "rol": "operador", 
+        "empresaId": "empresa-test-001",
+        "activo": true,
+        "fechaCreacion": "2025-10-19T00:00:00Z"
+      },
+      "messenger-uid-001": {
+        "nombre": "Mensajero",
+        "apellido": "Test",
+        "email": "mensajero@test.com",
+        "rol": "mensajero",
+        "empresaId": "empresa-test-001", 
+        "activo": true,
+        "fechaCreacion": "2025-10-19T00:00:00Z"
+      }
+    }
+  }
+}

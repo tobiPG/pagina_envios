@@ -1,0 +1,9 @@
+{
+  "type": "module",
+  "scripts": {
+    "seed": "node seedDatabase.mjs"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.0.0"
+  }
+}

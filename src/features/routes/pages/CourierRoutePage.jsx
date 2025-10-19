@@ -69,11 +69,15 @@ export default function RutaMensajero() {
   const empresaId =
     usuario?.empresaId != null ? String(usuario.empresaId) : null;
 
-  // modo: "order" o "route"
+  // modo: "order", "route", o "multi-stop"
   const [mode, setMode] = useState("order");
 
   // ===== ORDEN destino selecionado (para trazar) =====
   const [dest, setDest] = useState({ lat: null, lng: null, etiqueta: "", orderId: null });
+
+  // ===== MULTI-STOP: múltiples destinos de una orden =====
+  const [multiStops, setMultiStops] = useState([]); // array de destinos
+  const [currentStopIndex, setCurrentStopIndex] = useState(0); // índice del stop actual
 
   // ===== INFO RUTA + LISTA DE ÓRDENES (modo route) =====
   const [ruta, setRuta] = useState(null); // { id, nombre, fecha, estado, mensajeroUid, ... }
@@ -92,21 +96,52 @@ export default function RutaMensajero() {
 
   const defaultCenter = useMemo(() => [18.4861, -69.9312], []);
 
-  // ========= DETECCIÓN DE MODO (RUTA vs ORDEN) =========
+  // ========= DETECCIÓN DE MODO (RUTA vs ORDEN vs MULTI-STOP) =========
   useEffect(() => {
     let active = true;
     async function detectModeAndLoad() {
       setLoading(true);
       setErr("");
 
-      // 1) Si vienen coords por state → tratamos como ORDEN (single)
+      // 1) Si vienen múltiples stops por state → tratamos como MULTI-STOP
+      if ((state?.multiStops && Array.isArray(state.multiStops) && state.multiStops.length > 1) ||
+          (state?.isMultiStop && state?.stops && Array.isArray(state.stops) && state.stops.length > 1)) {
+        if (!active) return;
+        
+        setMode("multi-stop");
+        setRuta(null);
+        setOrdenesRuta([]);
+        
+        // Usar multiStops si está disponible, si no usar stops
+        const stopsData = state.multiStops || state.stops || [];
+        
+        setMultiStops(stopsData);
+        setCurrentStopIndex(0);
+        
+        // Establecer el primer stop como destino inicial
+        const firstStop = stopsData[0];
+        
+        setDest({
+          lat: firstStop.lat || firstStop.destinoLat || firstStop.addressLat,
+          lng: firstStop.lng || firstStop.destinoLng || firstStop.addressLng,
+          etiqueta: firstStop.etiqueta || firstStop.direccionTexto || firstStop.direccion || firstStop.contacto || "Destino 1",
+          orderId: state?.ordenId || firstStop.orderId || null,
+        });
+        
+        setLoading(false);
+        return;
+      }
+
+      // 2) Si vienen coords por state → tratamos como ORDEN (single)
       const sLat = normNum(state?.lat);
       const sLng = normNum(state?.lng);
       if (Number.isFinite(sLat) && Number.isFinite(sLng)) {
         if (!active) return;
+        
         setMode("order");
         setRuta(null);
         setOrdenesRuta([]);
+        setMultiStops([]);
         setDest({
           lat: sLat,
           lng: sLng,
@@ -121,7 +156,7 @@ export default function RutaMensajero() {
         return;
       }
 
-      // 2) Intentar cargar RUTA con id
+      // 3) Intentar cargar RUTA con id
       try {
         const rRef = doc(db, "rutas", id);
         const rSnap = await getDoc(rRef);
@@ -191,6 +226,27 @@ export default function RutaMensajero() {
           return;
         }
         const o = snap.data() || {};
+        
+        // Verificar si es multi-stop
+        const isMultiStop = o.tipo === "avanzada" && o.stops && Array.isArray(o.stops) && o.stops.length > 1;
+        
+          if (isMultiStop) {
+            setMode("multi-stop");
+            setRuta(null);
+            setOrdenesRuta([]);
+            setMultiStops(o.stops);
+            setCurrentStopIndex(0);
+            
+            const firstStop = o.stops[0];
+            setDest({
+              lat: firstStop.lat || firstStop.destinoLat || firstStop.addressLat,
+              lng: firstStop.lng || firstStop.destinoLng || firstStop.addressLng,
+              etiqueta: firstStop.etiqueta || firstStop.direccionTexto || firstStop.direccion || firstStop.contacto || "Destino 1",
+              orderId: snap.id,
+            });
+            setLoading(false);
+            return;
+          }        // Orden simple
         const lat = normNum(o?.destinoLat ?? o?.address?.lat ?? o?.destino?.lat);
         const lng = normNum(o?.destinoLng ?? o?.address?.lng ?? o?.destino?.lng);
         if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
@@ -201,6 +257,7 @@ export default function RutaMensajero() {
         setMode("order");
         setRuta(null);
         setOrdenesRuta([]);
+        setMultiStops([]);
         setDest({
           lat, lng,
           etiqueta: o.direccionTexto || o.address?.formatted || o.cliente || "Destino",
@@ -313,11 +370,17 @@ export default function RutaMensajero() {
         const lng = normNum(o?.destinoLng ?? o?.address?.lng);
         if (Number.isFinite(lat) && Number.isFinite(lng)) pts.push([lat, lng]);
       }
+    } else if (mode === "multi-stop" && Array.isArray(multiStops)) {
+      for (const stop of multiStops) {
+        const lat = normNum(stop.lat || stop.destinoLat || stop.addressLat);
+        const lng = normNum(stop.lng || stop.destinoLng || stop.addressLng);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) pts.push([lat, lng]);
+      }
     } else {
       if (Number.isFinite(dest.lat) && Number.isFinite(dest.lng)) pts.push([dest.lat, dest.lng]);
     }
     return pts;
-  }, [origin, dest, mode, ordenesRuta]);
+  }, [origin, dest, mode, ordenesRuta, multiStops]);
 
   const distanceKm = distM != null ? (distM / 1000).toFixed(1) : null;
   const etaMin = durS != null ? Math.round(durS / 60) : null;
@@ -331,6 +394,48 @@ export default function RutaMensajero() {
       window.open(`https://www.google.com/maps/dir/?api=1&origin=${o}&destination=${d}&travelmode=driving`, "_blank");
     } else {
       window.open(`https://www.google.com/maps/dir/?api=1&destination=${d}&travelmode=driving`, "_blank");
+    }
+  };
+
+  // ========= Funciones Multi-Stop =========
+  const goToNextStop = () => {
+    if (mode === "multi-stop" && currentStopIndex < multiStops.length - 1) {
+      const nextIndex = currentStopIndex + 1;
+      setCurrentStopIndex(nextIndex);
+      const nextStop = multiStops[nextIndex];
+      setDest({
+        lat: nextStop.lat || nextStop.destinoLat || nextStop.addressLat,
+        lng: nextStop.lng || nextStop.destinoLng || nextStop.addressLng,
+        etiqueta: nextStop.etiqueta || nextStop.direccionTexto || nextStop.direccion || nextStop.contacto || `Destino ${nextIndex + 1}`,
+        orderId: nextStop.orderId || dest.orderId,
+      });
+    }
+  };
+
+  const goToPreviousStop = () => {
+    if (mode === "multi-stop" && currentStopIndex > 0) {
+      const prevIndex = currentStopIndex - 1;
+      setCurrentStopIndex(prevIndex);
+      const prevStop = multiStops[prevIndex];
+      setDest({
+        lat: prevStop.lat || prevStop.destinoLat || prevStop.addressLat,
+        lng: prevStop.lng || prevStop.destinoLng || prevStop.addressLng,
+        etiqueta: prevStop.etiqueta || prevStop.direccionTexto || prevStop.direccion || prevStop.contacto || `Destino ${prevIndex + 1}`,
+        orderId: prevStop.orderId || dest.orderId,
+      });
+    }
+  };
+
+  const goToStop = (stopIndex) => {
+    if (mode === "multi-stop" && stopIndex >= 0 && stopIndex < multiStops.length) {
+      setCurrentStopIndex(stopIndex);
+      const stop = multiStops[stopIndex];
+      setDest({
+        lat: stop.lat || stop.destinoLat || stop.addressLat,
+        lng: stop.lng || stop.destinoLng || stop.addressLng,
+        etiqueta: stop.etiqueta || stop.direccionTexto || stop.direccion || stop.contacto || `Destino ${stopIndex + 1}`,
+        orderId: stop.orderId || dest.orderId,
+      });
     }
   };
 
@@ -390,7 +495,9 @@ export default function RutaMensajero() {
     <div style={{ padding: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <h2 style={{ margin: 0 }}>
-          {mode === "route" ? `🧭 ${ruta?.nombre || "Ruta"} (${ruta?.fecha || "—"})` : "🧭 Ruta hacia el destino"}
+          {mode === "route" ? `🧭 ${ruta?.nombre || "Ruta"} (${ruta?.fecha || "—"})` : 
+           mode === "multi-stop" ? `🧭 Navegación Multi-Stop (${currentStopIndex + 1}/${multiStops.length})` :
+           "🧭 Ruta hacia el destino"}
         </h2>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button onClick={() => navigate(-1)}>&larr; Volver</button>
@@ -404,6 +511,53 @@ export default function RutaMensajero() {
           {ruta?.mensajeroNombre && <span className="pill">Mensajero: <b>{ruta.mensajeroNombre}</b></span>}
           {ruta?.estado && <span className="pill">Estado ruta: <b>{String(ruta.estado).toUpperCase()}</b></span>}
           <span className="pill">Órdenes: <b>{ordenesRuta.length}</b></span>
+        </div>
+      )}
+
+      {mode === "multi-stop" && (
+        <div style={{ marginTop: 6 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+            <span className="pill">Stop Actual: <b>{currentStopIndex + 1}/{multiStops.length}</b></span>
+            <span className="pill">Destino: <b>{dest.etiqueta}</b></span>
+          </div>
+          
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button 
+              onClick={goToPreviousStop} 
+              disabled={currentStopIndex === 0}
+              style={{ padding: "6px 12px" }}
+            >
+              ← Stop Anterior
+            </button>
+            
+            <div style={{ display: "flex", gap: 4 }}>
+              {multiStops.map((stop, index) => (
+                <button
+                  key={index}
+                  onClick={() => goToStop(index)}
+                  style={{
+                    padding: "4px 8px",
+                    fontSize: "12px",
+                    backgroundColor: index === currentStopIndex ? "#007bff" : "#f8f9fa",
+                    color: index === currentStopIndex ? "white" : "#333",
+                    border: "1px solid #ddd",
+                    borderRadius: "4px",
+                    cursor: "pointer"
+                  }}
+                >
+                  {index + 1}
+                </button>
+              ))}
+            </div>
+            
+            <button 
+              onClick={goToNextStop} 
+              disabled={currentStopIndex === multiStops.length - 1}
+              style={{ padding: "6px 12px" }}
+            >
+              Stop Siguiente →
+            </button>
+          </div>
         </div>
       )}
 
@@ -444,7 +598,7 @@ export default function RutaMensajero() {
             </Marker>
           )}
 
-          {/* Destinos — modo ruta: todos; modo orden: único */}
+          {/* Destinos — modo ruta: todos; modo multi-stop: todos los stops; modo orden: único */}
           {mode === "route" ? (
             ordenesRuta.map(o => {
               const lat = normNum(o?.destinoLat ?? o?.address?.lat);
@@ -475,6 +629,44 @@ export default function RutaMensajero() {
                         </button>{" "}
                         <button onClick={() => navigate(`/orden/${o.id}`)}>Ver orden</button>
                       </div>
+                    </div>
+                  </Popup>
+                </Marker>
+              );
+            })
+          ) : mode === "multi-stop" ? (
+            multiStops.map((stop, index) => {
+              const lat = normNum(stop.lat || stop.destinoLat || stop.addressLat);
+              const lng = normNum(stop.lng || stop.destinoLng || stop.addressLng);
+              if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+              const isCurrent = index === currentStopIndex;
+              const isCompleted = index < currentStopIndex;
+              
+              let icon = iconDestino;
+              if (isCurrent) icon = iconSelected;
+              else if (isCompleted) icon = iconOrigen; // Reutilizar ícono verde para completados
+              
+              return (
+                <Marker key={index} position={[lat, lng]} icon={icon}>
+                  <Popup>
+                    <div style={{ minWidth: 180 }}>
+                      <div style={{ fontWeight: 700 }}>
+                        {isCompleted ? "✅ " : isCurrent ? "🎯 " : "📍 "}
+                        Stop {index + 1}/{multiStops.length} ({stop.tipo || "stop"})
+                      </div>
+                      <div style={{ fontSize: 12, marginTop: 4 }}>
+                        {stop.etiqueta || stop.direccionTexto || stop.direccion || stop.contacto || `Destino ${index + 1}`}
+                      </div>
+                      <div style={{ fontSize: 10, color: "#666", marginTop: 2 }}>
+                        {lat.toFixed(5)}, {lng.toFixed(5)}
+                      </div>
+                      {!isCurrent && (
+                        <div style={{ marginTop: 6 }}>
+                          <button onClick={() => goToStop(index)}>
+                            {isCompleted ? "Volver a este stop" : "Ir a este stop"}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </Popup>
                 </Marker>
